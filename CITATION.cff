@@ -1,0 +1,15 @@
+cff-version: 1.2.0
+message: "If you use LearnARTA, please cite the software release you used. If no release has been tagged yet, cite the repository URL together with the commit hash."
+title: "LearnARTA"
+version: "0.0.1"
+type: software
+license: "Apache-2.0 OR MIT"
+repository-code: "https://github.com/MasWag/LearnARTA"
+authors:
+  - family-names: "Waga"
+    given-names: "Masaki"
+keywords:
+  - alternating real-time automata
+  - automata learning
+  - active learning
+  - formal methods

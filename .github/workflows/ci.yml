@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.1
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        if: ${{ env.ACT != 'true' }}
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.1
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        if: ${{ env.ACT != 'true' }}
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+
+  test:
+    name: Test (${{ matrix.toolchain }}, ${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain:
+          - "1.88"
+          - "1.89"
+          - "1.90"
+          - "1.91"
+          - "1.92"
+          - "1.93"
+          - "1.94.1"
+        profile:
+          - default
+          - no-default-features
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - uses: Swatinem/rust-cache@v2
+        if: ${{ env.ACT != 'true' }}
+      - name: Run tests
+        run: |
+          case "${{ matrix.profile }}" in
+            default)
+              cargo +${{ matrix.toolchain }} test --workspace
+              ;;
+            no-default-features)
+              cargo +${{ matrix.toolchain }} test \
+                -p learn-arta-core \
+                -p learn-arta-traits \
+                -p learn-arta \
+                -p learn-arta-oracles \
+                --no-default-features
+              ;;
+          esac
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.1
+      - uses: Swatinem/rust-cache@v2
+        if: ${{ env.ACT != 'true' }}
+      - run: cargo doc --workspace --all-features --no-deps
+      - run: cargo rustdoc -p learn-arta-core --lib -- -D missing-docs
+      - run: cargo rustdoc -p learn-arta-traits --lib -- -D missing-docs
+      - run: cargo rustdoc -p learn-arta --lib --all-features -- -D missing-docs
+      - run: cargo rustdoc -p learn-arta-oracles --lib -- -D missing-docs

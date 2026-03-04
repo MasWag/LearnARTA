@@ -1,0 +1,4 @@
+[submodule "baselines/NLStarRTA"]
+	path = baselines/NLStarRTA
+	url = https://github.com/Leslieaj/NRTALearning.git
+	branch = newlstar

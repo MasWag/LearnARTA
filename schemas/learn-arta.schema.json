@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/schemas/arta.schema.json",
+  "title": "ARTA JSON format",
+  "description": "Schema for alternating real-time automata (ARTA) in LearnARTA JSON format. Transition targets use recursive positive Boolean syntax. Initial states accept either the legacy list-of-locations form or the same recursive positive Boolean syntax. Readers may also canonicalize legacy/original NRTA overlap encoding into deterministic ARTA transitions during import.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "l", "sigma", "tran", "init", "accept"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Human-readable name of the automaton."
+    },
+    "l": {
+      "type": "array",
+      "description": "Finite set of locations (states) of the automaton.",
+      "items": {
+        "type": "string",
+        "description": "Identifier of a location."
+      },
+      "uniqueItems": true
+    },
+    "sigma": {
+      "type": "array",
+      "description": "Declared input alphabet. Unused symbols are allowed on input; writers may infer this set from transitions.",
+      "items": {
+        "type": "string",
+        "description": "Identifier of an input symbol."
+      },
+      "uniqueItems": true
+    },
+    "tran": {
+      "type": "object",
+      "description": "Transition relation encoded as a map from transition IDs to 4-tuples [source, symbol, guard, target].",
+      "propertyNames": {
+        "pattern": "^[0-9]+$",
+        "description": "Transition ID written as a decimal string."
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/transition"
+      }
+    },
+    "init": {
+      "description": "Initial state formula. For backward compatibility this may be a list of locations interpreted disjunctively, or a full positive Boolean formula.",
+      "oneOf": [
+        {
+          "type": "array",
+          "description": "Legacy initial locations, interpreted disjunctively.",
+          "items": {
+            "type": "string",
+            "description": "Identifier of an initial location."
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        {
+          "$ref": "#/$defs/target"
+        }
+      ]
+    },
+    "accept": {
+      "type": "array",
+      "description": "Accepting locations.",
+      "items": {
+        "type": "string",
+        "description": "Identifier of an accepting location."
+      },
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "target": {
+      "description": "Positive Boolean formula over locations. Strings denote atomic locations. Compound formulas use recursive 'and' / 'or' objects. Constants use {'const': true|false}.",
+      "oneOf": [{"type": "string", "description": "Atomic target: a single location identifier."}, {"type": "object", "description": "Boolean constant formula.", "additionalProperties": false, "required": ["const"], "properties": {"const": {"type": "boolean"}}}, {"type": "object", "description": "Disjunctive target formula.", "additionalProperties": false, "required": ["or"], "properties": {"or": {"type": "array", "description": "List of subtargets combined by logical OR.", "items": {"$ref": "#/$defs/target"}, "minItems": 2}}}, {"type": "object", "description": "Conjunctive target formula.", "additionalProperties": false, "required": ["and"], "properties": {"and": {"type": "array", "description": "List of subtargets combined by logical AND.", "items": {"$ref": "#/$defs/target"}, "minItems": 2}}}]
+    },
+    "transition": {
+      "type": "array",
+      "description": "A transition encoded as [source, symbol, guard, target].",
+      "prefixItems": [{"type": "string", "description": "Source location."}, {"type": "string", "description": "Input symbol labeling the transition."}, {"type": "string", "description": "Timing guard written as an interval string, such as '[2,3)', '(1,4)', or '[5,+)'."}, {"$ref": "#/$defs/target"}],
+      "items": false,
+      "minItems": 4,
+      "maxItems": 4
+    }
+  },
+  "$comment": "This schema checks JSON structure only. Additional semantic checks, such as membership of referenced states in 'l', membership of symbols in 'sigma', validity of interval syntax, and pairwise disjointness of guards for each (source, symbol), must be implemented separately. LearnARTA readers may canonicalize legacy/original NRTA overlaps into deterministic ARTA before enforcing determinism."
+}

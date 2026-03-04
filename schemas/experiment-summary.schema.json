@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/schemas/experiment-summary.schema.json",
+  "title": "Experiment summary JSON format",
+  "description": "Schema for aggregated experiment summaries such as logs/summary.json. Each entry combines learner-specific counters parsed from the benchmark log with process metrics parsed from the matching GNU time report.",
+  "type": "array",
+  "items": {
+    "$ref": "#/$defs/summaryEntry"
+  },
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "nonNegativeInteger": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "nonNegativeNumber": {
+      "type": "number",
+      "minimum": 0
+    },
+    "summaryEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "benchmark_name", "suite_name", "eq_queries", "mem_queries", "rows", "columns", "num_states", "command_being_timed", "user_time", "system_time", "cpu_percent", "elapsed_time", "average_shared_text_size", "average_unshared_data_size", "average_stack_size", "average_total_size", "maximum_resident_set_size", "average_resident_set_size", "major_pagefaults", "minor_pagefaults", "voluntary_context_switches", "involuntary_context_switches", "swaps", "block_input_operations", "block_output_operations", "messages_sent", "messages_received", "signals_delivered", "page_size", "exit_status", "elapsed_time_hours", "elapsed_time_minutes", "elapsed_time_seconds", "elapsed_time_centiseconds", "elapsed_time_total_seconds"],
+      "properties": {
+        "id": {
+          "allOf": [{"$ref": "#/$defs/nonEmptyString"}],
+          "description": "Stable identifier assembled from suite name, benchmark name, learner mode, and timestamp.",
+          "pattern": "^[A-Za-z0-9_]+-[A-Za-z0-9_-]+-(?:learn-arta|nlstar-rta)-[0-9]{8}-[0-9]{6}$"
+        },
+        "benchmark_name": {
+          "allOf": [{"$ref": "#/$defs/nonEmptyString"}],
+          "description": "Benchmark instance name, typically the leaf directory name under a suite."
+        },
+        "suite_name": {
+          "allOf": [{"$ref": "#/$defs/nonEmptyString"}],
+          "description": "Benchmark suite name, typically derived from the benchmark directory prefix."
+        },
+        "eq_queries": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Number of equivalence queries issued during learning."
+        },
+        "mem_queries": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Number of membership queries issued during learning."
+        },
+        "rows": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Observation-table row count or comparable learner table size statistic."
+        },
+        "columns": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Observation-table column count or comparable learner table width statistic."
+        },
+        "num_states": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Number of states in the learned hypothesis reported by the learner."
+        },
+        "command_being_timed": {
+          "allOf": [{"$ref": "#/$defs/nonEmptyString"}],
+          "description": "Exact command line passed to GNU time."
+        },
+        "user_time": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeNumber"}],
+          "description": "User CPU time in seconds."
+        },
+        "system_time": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeNumber"}],
+          "description": "System CPU time in seconds."
+        },
+        "cpu_percent": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "CPU utilization percentage reported by GNU time."
+        },
+        "elapsed_time": {
+          "type": "string",
+          "description": "Elapsed wall-clock time as rendered by GNU time, for example '0:07.58' or '1:02:03.45'.",
+          "pattern": "^\\d+(?::\\d{2}){1,2}(?:\\.\\d{2})?$"
+        },
+        "average_shared_text_size": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Average shared text size reported by GNU time."
+        },
+        "average_unshared_data_size": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Average unshared data size reported by GNU time."
+        },
+        "average_stack_size": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Average stack size reported by GNU time."
+        },
+        "average_total_size": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Average total memory size reported by GNU time."
+        },
+        "maximum_resident_set_size": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Maximum resident set size reported by GNU time."
+        },
+        "average_resident_set_size": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Average resident set size reported by GNU time."
+        },
+        "major_pagefaults": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Number of major page faults."
+        },
+        "minor_pagefaults": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Number of minor page faults."
+        },
+        "voluntary_context_switches": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Number of voluntary context switches."
+        },
+        "involuntary_context_switches": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Number of involuntary context switches."
+        },
+        "swaps": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Number of swap operations."
+        },
+        "block_input_operations": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Number of block input operations."
+        },
+        "block_output_operations": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Number of block output operations."
+        },
+        "messages_sent": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Number of IPC messages sent."
+        },
+        "messages_received": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Number of IPC messages received."
+        },
+        "signals_delivered": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Number of signals delivered."
+        },
+        "page_size": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "System page size in bytes."
+        },
+        "exit_status": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Process exit status reported by GNU time."
+        },
+        "elapsed_time_hours": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeInteger"}],
+          "description": "Elapsed wall-clock hours component."
+        },
+        "elapsed_time_minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 59,
+          "description": "Elapsed wall-clock minutes component."
+        },
+        "elapsed_time_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 59,
+          "description": "Elapsed wall-clock seconds component."
+        },
+        "elapsed_time_centiseconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 99,
+          "description": "Elapsed wall-clock centiseconds component."
+        },
+        "elapsed_time_total_seconds": {
+          "allOf": [{"$ref": "#/$defs/nonNegativeNumber"}],
+          "description": "Elapsed wall-clock time converted to total seconds."
+        }
+      }
+    }
+  },
+  "$comment": "This schema validates the structure of aggregated summaries. It does not enforce cross-field relationships such as benchmark_name belonging to suite_name or consistency between elapsed_time and its decomposed numeric fields."
+}

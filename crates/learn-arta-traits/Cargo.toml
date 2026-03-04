@@ -1,0 +1,16 @@
+[package]
+name = "learn-arta-traits"
+description = "Shared learning and oracle traits for LearnARTA"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/learn-arta-traits"
+readme = "README.md"
+keywords = ["automata", "real-time", "learning", "verification", "arta"]
+categories = ["algorithms", "science"]
+
+[dependencies]
+learn-arta-core = { path = "../learn-arta-core", version = "0.0.1" }

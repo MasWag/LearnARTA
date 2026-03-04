@@ -1,0 +1,25 @@
+[package]
+name = "learn-arta-cli"
+description = "Auxiliary CLI utilities for LearnARTA"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+default = ["milp"]
+milp = ["learn-arta/milp"]
+
+[dependencies]
+learn-arta-core = { path = "../learn-arta-core" }
+learn-arta-traits = { path = "../learn-arta-traits" }
+learn-arta = { path = "../learn-arta" }
+learn-arta-oracles = { path = "../learn-arta-oracles" }
+clap = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+time = { version = "0.3.41", features = ["formatting", "local-offset", "macros"] }

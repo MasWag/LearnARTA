@@ -1,0 +1,22 @@
+[package]
+name = "learn-arta-core"
+description = "Core types for the LearnARTA library"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/learn-arta-core"
+readme = "README.md"
+keywords = ["automata", "real-time", "learning", "verification", "arta"]
+categories = ["algorithms", "science"]
+
+[dependencies]
+thiserror = { workspace = true }
+indexmap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

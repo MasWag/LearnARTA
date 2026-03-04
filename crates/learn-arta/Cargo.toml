@@ -1,0 +1,28 @@
+[package]
+name = "learn-arta"
+description = "Learning algorithm for Alternating Real-Time Automata"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/learn-arta"
+readme = "README.md"
+keywords = ["automata", "real-time", "learning", "verification", "arta"]
+categories = ["algorithms", "science"]
+
+[features]
+default = ["milp"]
+milp = ["dep:good_lp"]
+
+[dependencies]
+learn-arta-core = { path = "../learn-arta-core", version = "0.0.1" }
+learn-arta-traits = { path = "../learn-arta-traits", version = "0.0.1" }
+thiserror = { workspace = true }
+fixedbitset = "0.5.7"
+good_lp = { version = "1", default-features = false, features = ["highs"], optional = true }
+log = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
