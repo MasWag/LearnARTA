@@ -23,3 +23,9 @@ target
 __pycache__
 
 logs
+
+# Generated Docker image archives for the artifact
+artifact/*.tar
+
+# Editor backup files
+*~
