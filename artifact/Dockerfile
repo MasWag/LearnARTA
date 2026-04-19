@@ -1,4 +1,4 @@
-FROM rust:slim
+FROM rust:1.95.0-slim-trixie
 LABEL maintainer="Masaki Waga <masakiwaga@gmail.com>"
 
 # Install required build dependencies
@@ -19,8 +19,13 @@ ENV PATH="/root/.local/bin:${PATH}"
 RUN pipx install jc
 
 # Clone and build LearnARTA
-RUN git clone --depth 1 https://github.com/MasWag/LearnARTA.git /LearnARTA --recursive && \
+RUN mkdir /LearnARTA && \
     cd /LearnARTA && \
+    git init && \
+    git remote add origin https://github.com/MasWag/LearnARTA.git && \
+    git fetch --depth 1 origin 4f652c02e7bc63d455f0d5ca30fb2c3c1d8615b6 && \
+    git checkout FETCH_HEAD && \
+    git submodule update --init && \
     cargo build --release
 
 # Remove git (only needed for cloning) to reduce image size
