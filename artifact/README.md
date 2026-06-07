@@ -102,13 +102,13 @@ Firstly, one has to generate a JSON file summarizing the results using the follo
 Then, one can show table corresponding to Table 1 in the paper using the following command:
 
 ```bash
-python ./scripts/print_group_summary_table.py ./logs/summary.json
+python3 ./scripts/print_group_summary_table.py ./logs/summary.json
 ```
 
-The full results can be shown using the following command:
+The full results can be shown using the following command
 
 ```bash
-python ./scripts/print_summary_table.py ./logs/summary.json
+python3 ./scripts/print_summary_table.py ./logs/summary.json
 ```
 
 These scripts can also generate a table in LaTeX format by passing `--format latex` as an argument.
