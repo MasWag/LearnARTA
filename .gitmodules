@@ -2,3 +2,6 @@
 	path = baselines/NLStarRTA
 	url = https://github.com/Leslieaj/NRTALearning.git
 	branch = newlstar
+[submodule "vendor/symbolicautomata"]
+	path = vendor/symbolicautomata
+	url = https://github.com/lorisdanto/symbolicautomata.git
