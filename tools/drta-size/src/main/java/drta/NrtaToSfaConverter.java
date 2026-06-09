@@ -136,39 +136,54 @@ public class NrtaToSfaConverter {
             sigma = new String[0];
         }
 
-        int initId = -1;
-        if (root.has("init") && root.get("init").isJsonArray()) {
-            JsonArray initArr = root.getAsJsonArray("init");
-            if (initArr.size() == 1 && initArr.get(0).isJsonPrimitive()) {
-                String initLoc = initArr.get(0).getAsString();
-                for (int i = 0; i < n; i++) {
-                    if (locations.get(i).equals(initLoc)) {
-                        initId = i;
-                        break;
-                    }
+        // Parse init locations (required; matches Rust convention where "init" is a required field)
+        if (!root.has("init") || !root.get("init").isJsonArray()) {
+            throw new IllegalArgumentException(fileName != null ? fileName + ": missing required field 'init'" + "\n  Hint: add an \"init\" array with at least one location name (e.g., \"init\":[\"q0\"])");
+        }
+        JsonArray initArr = root.getAsJsonArray("init");
+        if (initArr == null || initArr.size() == 0) {
+            throw new IllegalArgumentException(fileName != null ? fileName + ": 'init' array is empty" + "\n  Hint: add at least one initial location name to the \"init\" array (e.g., \"init\":[\"q0\"])");
+        }
+        List<Integer> initIds = new ArrayList<>();
+        for (int i = 0; i < initArr.size(); i++) {
+            String initLoc = initArr.get(i).getAsString();
+            int locId = -1;
+            for (int j = 0; j < n; j++) {
+                if (locations.get(j).equals(initLoc)) {
+                    locId = j;
+                    break;
                 }
             }
+            if (locId < 0) {
+                throw new IllegalArgumentException(fileName != null ? fileName + ": unknown initial location '" + initLoc + "' not in locations" : "unknown initial location '" + initLoc + "' not in locations");
+            }
+            initIds.add(locId);
         }
-        int[] initialLocations;
-        if (initId >= 0) {
-            initialLocations = new int[]{initId};
-        } else {
-            initialLocations = (n > 0) ? new int[]{0} : new int[0];
+        int[] initialLocations = new int[initIds.size()];
+        for (int i = 0; i < initIds.size(); i++) {
+            initialLocations[i] = initIds.get(i);
         }
 
+        // Parse accepting locations (unknown names are parse errors, matching Rust convention)
         List<Integer> acceptIds = new ArrayList<>();
         if (root.has("accept") && root.get("accept").isJsonArray()) {
             JsonArray accArr = root.getAsJsonArray("accept");
             for (int i = 0; i < accArr.size(); i++) {
                 String loc = accArr.get(i).getAsString();
+                int locId = -1;
                 for (int j = 0; j < n; j++) {
                     if (locations.get(j).equals(loc)) {
-                        acceptIds.add(j);
+                        locId = j;
                         break;
                     }
                 }
+                if (locId < 0) {
+                    throw new IllegalArgumentException(fileName != null ? fileName + ": unknown accepting location '" + loc + "' not in locations" : "unknown accepting location '" + loc + "' not in locations");
+                }
+                acceptIds.add(locId);
             }
         }
+        // Missing 'accept' -> empty accepting set (valid NRTA default)
         int[] acceptingLocations = new int[acceptIds.size()];
         for (int i = 0; i < acceptIds.size(); i++) {
             acceptingLocations[i] = acceptIds.get(i);
