@@ -7,86 +7,273 @@ import automata.sfa.SFAMove;
 import com.google.gson.*;
 import org.sat4j.specs.TimeoutException;
 
-import java.nio.file.*;
 import java.util.*;
 
 /**
- * NrtaToSfaConverter converts a parsed NRTA JSON document into a symbolic
- * finite automaton (SFA) using the TimedLetterBooleanAlgebra.
+ * Converts a parsed NRTA JSON document into a symbolic finite automaton (SFA).
  *
- * Conversion rules:
- *   - Each NRTA location `l[i]` maps to state `i`.
- *   - Each NRTA transition
- *       [source, symbol, guard, targetFormula]
- *     maps to an SFAInputMove from state(source) to state(targetFormulaStates)
- *     with predicate guard = {symbol -> TimedIntervalSet(parsed from guard)}.
- *     If targetFormula is a Boolean formula (and/or/const), the target states
- *     are extracted and individual SFAInputMoves are added for each.
- *   - If the init field is a list, the first element becomes the initial state.
- *     If it is a formula, a fresh initial state with epsilon transitions is added.
- *   - All NRTA accepting states are passed to SFA.MkSFA as final states.
+ * <h3>NRTA target support</h3>
+ * <ul>
+ *   <li><b>Primitive target</b> (e.g. {@code "q1"}) &rarr; one transition to q1.</li>
+ *   <li>{@code {"or": ["q1", "q2"]}} (disjunctive) &rarr; nondeterministic branching:
+ *       one transition per listed target.</li>
+ *   <li>{@code {"const": false}} &rarr; no successor transition (dead-end edge).</li>
+ *   <li>{@code {"const": true}} &rarr; rejected with UnsupportedTargetException.
+ *       Tautologous targets have no meaningful interpretation in NRTA location targeting.</li>
+ * </ul>
  *
- * Nondeterminism is preserved: overlapping guards produce multiple SFAInputMoves
- * because we do NOT canonicalize the guards before building the SFA.
+ * <h3>ARTA-style conjunctive targets</h3>
+ * {@code {"and": [...]}} targets are ARTA (Alternating Regular Tree Automata) constructs
+ * and are <b>not supported</b> in the NRTA-to-SFA path. Attempting to convert an NRTA
+ * with conjunctive targets will raise {@link UnsupportedOperationException}.
  */
 public class NrtaToSfaConverter {
 
-    /** Parsed data extracted from NRTA JSON (milestone-1 parser output). */
+    /** One parsed NRTA transition with structural info. */
+    public static class ParsedTransition {
+        public final String sourceName, symbol, guardStr;
+        public TimedInterval guardInterval;
+        public boolean isDeadEnd;
+
+        public ParsedTransition(String sourceName, String symbol, String guardStr) {
+            this.sourceName = sourceName;
+            this.symbol = symbol;
+            this.guardStr = guardStr;
+        }
+    }
+
+    /** Parsed data extracted from NRTA JSON (produced by parseNrtasJson). */
     public static class ParsedNrta {
         public final String name;
         public final List<String> locations;       // l
-        public final Map<String, JsonElement> transitions;   // tran
         public final String[] sigma;               // alphabet
-        public final boolean[] isInitial;
-        public final int[] initialLocations;        // -1 if formula init
-        public final boolean[] isAccepting;
-        public final int[] acceptingLocations;      // -1 if formula accept (not supported yet)
+        public final int[] initialLocations;
+        public final int[] acceptingLocations;
+
+        /** Parsed transitions corresponding to each "tran" entry. */
+        private List<ParsedTransition> allTransitions;
+
+        /** Raw transition JSON elements, keyed by tran-key, for re-scan during SFA conversion. */
+        private Map<String, JsonElement> rawTransitions;
 
         public ParsedNrta(String name, List<String> locations,
-                          Map<String, JsonElement> transitions,
-                          String[] sigma,
-                          int[] initialLocations,
-                          int[] acceptingLocations) {
+                           String[] sigma,
+                           int[] initialLocations,
+                           int[] acceptingLocations) {
             this.name = name;
-            this.locations = locations;
-            this.transitions = Collections.unmodifiableMap(new LinkedHashMap<>(transitions));
-            this.sigma = sigma;
-            this.isInitial = initToBoolArray(initialLocations, locations.size());
-            this.isAccepting = acceptToBoolArray(acceptingLocations, locations.size());
+            this.locations = Collections.unmodifiableList(new ArrayList<>(locations));
+            this.sigma = Objects.requireNonNull(sigma);
             this.initialLocations = initialLocations;
             this.acceptingLocations = acceptingLocations;
         }
 
-        private static boolean[] initToBoolArray(int[] locs, int n) {
-            boolean[] result = new boolean[n];
-            for (int i : locs) {
-                if (i >= 0 && i < n) result[i] = true;
-            }
-            return result;
+        public void setTransitions(List<ParsedTransition> allTransitions) {
+            this.allTransitions = allTransitions;
         }
 
-        private static boolean[] acceptToBoolArray(int[] locs, int n) {
-            boolean[] result = new boolean[n];
-            for (int i : locs) {
-                if (i >= 0 && i < n) result[i] = true;
+        public List<ParsedTransition> getTransitions() {
+            return allTransitions != null ? allTransitions : Collections.emptyList();
+        }
+
+        public void setRawTransitions(Map<String, JsonElement> raw) {
+            this.rawTransitions = raw;
+        }
+
+        public int locationCount() {
+            return locations.size();
+        }
+
+
+        /** Target info extracted from the JSON target field. */
+        public static class TargetInfo {
+            public final List<Integer> ids;
+            public final String kind; // "primitive", "or", "const_false", "conjunctive"
+            public boolean isConjunctive;
+
+            public TargetInfo(List<Integer> ids, String kind) {
+                this.ids = Collections.unmodifiableList(new ArrayList<>(ids));
+                this.kind = kind;
+                this.isConjunctive = "conjunctive".equals(kind);
             }
-            return result;
+
+            public static TargetInfo empty() { return new TargetInfo(Collections.emptyList(), "none"); }
+            public static TargetInfo conjunctive(List<Integer> ids) {
+                return new TargetInfo(ids, "conjunctive");
+            }
         }
     }
 
-    /** Convert ParsedNrta to an SFA<TimedPredicate, List<TimedLetter>>. */
-    public static SFA<TimedPredicate, List<TimedLetter>> toSfa(ParsedNrta nrta,
-                                                                 TimedLetterBooleanAlgebra ba)
+    /** Exception thrown when the NRTA contains unsupported targets (ARTA-style). */
+    public static class UnsupportedTargetException extends UnsupportedOperationException {
+        private final String fileName;
+        private final int transitionIndex;
+
+        public UnsupportedTargetException(String message, String fileName, int transitionIndex) {
+            super(message);
+            this.fileName = fileName;
+            this.transitionIndex = transitionIndex;
+        }
+
+        public String getFileName() { return fileName; }
+        public int getTransitionIndex() { return transitionIndex; }
+    }
+
+    /**
+     * Parse raw NRTA JSON into a ParsedNrta.
+     */
+    public static ParsedNrta parseNrtasJson(JsonObject root, String fileName) {
+        List<String> locations = readLocations(root);
+        int n = locations.size();
+
+        String[] sigma;
+        if (root.has("sigma") && root.get("sigma").isJsonArray()) {
+            JsonArray sigmaArr = root.getAsJsonArray("sigma");
+            sigma = new String[sigmaArr.size()];
+            for (int i = 0; i < sigmaArr.size(); i++) {
+                sigma[i] = sigmaArr.get(i).getAsString();
+            }
+        } else {
+            sigma = new String[0];
+        }
+
+        int initId = -1;
+        if (root.has("init") && root.get("init").isJsonArray()) {
+            JsonArray initArr = root.getAsJsonArray("init");
+            if (initArr.size() == 1 && initArr.get(0).isJsonPrimitive()) {
+                String initLoc = initArr.get(0).getAsString();
+                for (int i = 0; i < n; i++) {
+                    if (locations.get(i).equals(initLoc)) {
+                        initId = i;
+                        break;
+                    }
+                }
+            }
+        }
+        int[] initialLocations;
+        if (initId >= 0) {
+            initialLocations = new int[]{initId};
+        } else {
+            initialLocations = (n > 0) ? new int[]{0} : new int[0];
+        }
+
+        List<Integer> acceptIds = new ArrayList<>();
+        if (root.has("accept") && root.get("accept").isJsonArray()) {
+            JsonArray accArr = root.getAsJsonArray("accept");
+            for (int i = 0; i < accArr.size(); i++) {
+                String loc = accArr.get(i).getAsString();
+                for (int j = 0; j < n; j++) {
+                    if (locations.get(j).equals(loc)) {
+                        acceptIds.add(j);
+                        break;
+                    }
+                }
+            }
+        }
+        int[] acceptingLocations = new int[acceptIds.size()];
+        for (int i = 0; i < acceptIds.size(); i++) {
+            acceptingLocations[i] = acceptIds.get(i);
+        }
+
+        String name;
+        if (root.has("name") && root.get("name").isJsonPrimitive()) {
+            name = root.get("name").getAsString();
+        } else {
+            name = fileName != null ? fileName : "unknown";
+        }
+
+        ParsedNrta parsed = new ParsedNrta(name, locations, sigma, initialLocations, acceptingLocations);
+        Map<String, JsonElement> rawTransitionsMap = new LinkedHashMap<>();
+
+        // Parse transitions
+        List<ParsedTransition> allTransitionList = new ArrayList<>();
+
+        if (root.has("tran") && root.get("tran").isJsonObject()) {
+            JsonObject tranObj = root.getAsJsonObject("tran");
+            List<String> keys = new ArrayList<>(tranObj.keySet());
+            Collections.sort(keys);
+            for (String key : keys) {
+                JsonElement transitionElem = tranObj.get(key);
+                rawTransitionsMap.put(key, transitionElem);
+                JsonArray arr = transitionElem.getAsJsonArray();
+                if (arr == null || arr.size() < 4) continue;
+
+                String sourceName = arr.get(0).getAsString();
+                String symbol = arr.get(1).getAsString();
+                String guardStr = arr.get(2).getAsString();
+                JsonElement targetElem = arr.get(3);
+
+                // Check for const:true early — throw immediately with context
+                if (targetElem.isJsonObject()) {
+                    JsonObject obj = targetElem.getAsJsonObject();
+                    if (obj.has("const") && obj.get("const").getAsBoolean()) {
+                        throw new UnsupportedTargetException(
+                            fileName + ": transition '" + key + "' uses {\"const\": true}, which is unsupported in NRTA",
+                            fileName, Integer.parseInt(key));
+                    }
+                }
+
+                ParsedTransition trans = new ParsedTransition(sourceName, symbol, guardStr);
+                
+                boolean isDeadEnd;
+                if (targetElem.isJsonObject()) {
+                    JsonObject obj = targetElem.getAsJsonObject();
+                    if (obj.has("const") && !obj.get("const").getAsBoolean()) {
+                        isDeadEnd = true; // const:false
+                    } else if (obj.has("and")) {
+                        isDeadEnd = false; // conjunctive — caller will reject during conversion
+                    } else {
+                        isDeadEnd = false;
+                    }
+                } else {
+                    // primitive string target
+                    String loc = targetElem.getAsString();
+                    Integer id = nameToId(loc, locations);
+                    isDeadEnd = (id == -1);
+                }
+
+                trans.isDeadEnd = isDeadEnd;
+                allTransitionList.add(trans);
+            }
+        }
+
+        parsed.setTransitions(allTransitionList);
+        parsed.setRawTransitions(rawTransitionsMap);
+        return parsed;
+    }
+
+    /** Detect any conjunctive targets in the raw JSON before full parsing. */
+    public static boolean hasConjunctiveTargets(JsonObject root) {
+        if (!root.has("tran") || !root.get("tran").isJsonObject()) return false;
+        JsonObject tran = root.getAsJsonObject("tran");
+        List<String> keys = new ArrayList<>(tran.keySet());
+        Collections.sort(keys);
+        for (String key : keys) {
+            JsonElement elem = tran.get(key);
+            JsonArray arr = elem.getAsJsonArray();
+            if (arr == null || arr.size() < 4) continue;
+            JsonElement targetElem = arr.get(3);
+            if (targetElem.isJsonObject()) {
+                JsonObject obj = targetElem.getAsJsonObject();
+                if (obj.has("and")) return true;
+            }
+        }
+        return false;
+    }
+
+    /** Convert to an SFA<TimedPredicate, TimedLetter>. */
+    public static SFA<TimedPredicate, TimedLetter> toSfa(ParsedNrta nrta,
+                                                         TimedLetterBooleanAlgebra ba)
             throws TimeoutException {
         return toSfaInternal(nrta, ba);
     }
 
-    private static SFA<TimedPredicate, List<TimedLetter>> toSfaInternal(ParsedNrta nrta,
-                                                                          TimedLetterBooleanAlgebra ba)
+    private static SFA<TimedPredicate, TimedLetter> toSfaInternal(ParsedNrta nrta,
+                                                                  TimedLetterBooleanAlgebra ba)
             throws TimeoutException {
-        int n = nrta.locations.size();
-        Collection<SFAMove<TimedPredicate, List<TimedLetter>>> moves = new ArrayList<>();
+        int n = nrta.locationCount();
+        if (n == 0) return SFA.MkSFA(Collections.emptyList(), 0, Collections.emptyList(), ba);
 
+        Collection<SFAMove<TimedPredicate, TimedLetter>> moves = new ArrayList<>();
         int initialState;
         if (nrta.initialLocations.length == 1 && nrta.initialLocations[0] >= 0) {
             initialState = nrta.initialLocations[0];
@@ -94,7 +281,7 @@ public class NrtaToSfaConverter {
             initialState = n;
             for (int i : nrta.initialLocations) {
                 if (i >= 0 && i < n) {
-                    moves.add(new SFAEpsilon<TimedPredicate, List<TimedLetter>>(initialState, i));
+                    moves.add(new SFAEpsilon<TimedPredicate, TimedLetter>(initialState, i));
                 }
             }
         }
@@ -106,108 +293,119 @@ public class NrtaToSfaConverter {
             }
         }
 
+        // Collect full sigma for predicates
         Set<String> sigmaSet = new LinkedHashSet<>(ba.alphabet());
 
-        for (Map.Entry<String, JsonElement> entry : nrta.transitions.entrySet()) {
+        // Build SFA from raw JSON transitions (they're stored in sorted key order)
+        int transIndex = 0;
+        for (Map.Entry<String, JsonElement> entry : nrta.rawTransitions.entrySet()) {
+            String key = entry.getKey();
             JsonArray arr = entry.getValue().getAsJsonArray();
-            if (arr == null || arr.size() < 4) continue;
+            if (arr == null || arr.size() < 4) { transIndex++; continue; }
 
             String sourceName = arr.get(0).getAsString();
             String sym = arr.get(1).getAsString();
             String guardStr = arr.get(2).getAsString();
+            JsonElement targetElem = arr.get(3);
 
-            Integer sourceId = nameToId(sourceName, nrta.locations, n);
-            if (sourceId == null) continue;
+            int sourceId = nameToId(sourceName, nrta.locations);
+            if (sourceId == -1) { transIndex++; continue; }
 
             sigmaSet.add(sym);
 
-            TargetInfo targets = extractTargets(arr.get(3), nrta);
-            if (targets == null || targets.ids.isEmpty()) continue;
+            ParsedNrta.TargetInfo targets = extractTargets(targetElem, nrta.locations, n, key, nrta.name);
+            
+            // Detect conjunctive targets and reject
+            if (targets.isConjunctive) {
+                throw new UnsupportedTargetException(
+                    "transition '" + key + "' has conjunctive target ('and'): " + arr.get(3).toString(),
+                    nrta.name, transIndex);
+            }
 
             TimedPredicate pred = TimedPredicate.fromGuard(sym, TimedInterval.parse(guardStr), sigmaSet);
 
-            if (targets.isConjunctive) {
-                // Conjunctive target (and): add one SFAInputMove per target state
+            if ("const_false".equals(targets.kind)) {
+                continue; // dead-end
+            } else if ("or".equals(targets.kind) || "primitive".equals(targets.kind)) {
                 for (int target : targets.ids) {
-                    moves.add(new SFAInputMove<TimedPredicate, List<TimedLetter>>(sourceId, target, pred));
-                }
-            } else if (targets.isDisjunctive) {
-                // Disjunctive target (or): add one SFAInputMove per target state
-                for (int target : targets.ids) {
-                    moves.add(new SFAInputMove<TimedPredicate, List<TimedLetter>>(sourceId, target, pred));
-                }
-            } else if (targets.isConstFalse) {
-                // Const false: no transitions (this transition is a dead-end)
-                continue;
-            } else {
-                // Atomic target (single string location)
-                for (int target : targets.ids) {
-                    moves.add(new SFAInputMove<TimedPredicate, List<TimedLetter>>(sourceId, target, pred));
+                    if (target >= 0 && target < n) {
+                        moves.add(new SFAInputMove<>(sourceId, target, pred));
+                    }
                 }
             }
+
+            transIndex++;
         }
 
         return SFA.MkSFA(moves, initialState, finalStates, ba, false, false, true);
     }
 
-    private static Integer nameToId(String name, List<String> locs, int expectedN) {
-        for (int i = 0; i < locs.size(); i++) {
-            if (locs.get(i).equals(name)) return i;
+    private static int nameToId(String name, List<String> locs) {
+        if (name != null && locs != null) {
+            for (int i = 0; i < locs.size(); i++) {
+                if (locs.get(i).equals(name)) return i;
+            }
         }
-        return null;
+        return -1; // Not found sentinel
     }
 
-    /** Extract target state IDs from a JSON element that may be a string or Boolean formula. */
-    private static TargetInfo extractTargets(JsonElement element, ParsedNrta nrta) {
-        if (element == null || element.isJsonNull()) return new TargetInfo();
+    /** Extract target state IDs and kind from a JSON element. */
+    private static ParsedNrta.TargetInfo extractTargets(JsonElement element, List<String> locs, int n,
+                                                         String transitionKey, String fileName) {
+        if (element == null || element.isJsonNull()) return ParsedNrta.TargetInfo.empty();
         if (element.isJsonPrimitive()) {
             String loc = element.getAsString();
-            Integer id = nameToId(loc, nrta.locations, nrta.locations.size());
-            if (id == null) return new TargetInfo();
+            Integer id = nameToId(loc, locs);
+            if (id == -1) return ParsedNrta.TargetInfo.empty();
+            return new ParsedNrta.TargetInfo(Collections.singletonList(id), "primitive");
+        }
+        if (!element.isJsonObject()) {
+            return ParsedNrta.TargetInfo.empty();
+        }
+
+        JsonObject obj = element.getAsJsonObject();
+        if (obj.has("and")) {
             List<Integer> ids = new ArrayList<>();
-            ids.add(id);
-            return new TargetInfo(ids, false, false, false);
-        }
-        if (element.isJsonObject()) {
-            JsonObject obj = element.getAsJsonObject();
-            if (obj.has("and")) {
-                List<Integer> ids = new ArrayList<>();
-                for (JsonElement e : obj.get("and").getAsJsonArray()) {
-                    if (e.isJsonPrimitive()) {
-                        Integer id = nameToId(e.getAsString(), nrta.locations, nrta.locations.size());
-                        if (id != null) ids.add(id);
-                    }
+            for (JsonElement e : obj.get("and").getAsJsonArray()) {
+                if (e.isJsonPrimitive()) {
+                    Integer id = nameToId(e.getAsString(), locs);
+                    if (id != -1) ids.add(id);
                 }
-                return new TargetInfo(ids, true, false, false);
             }
-            if (obj.has("or")) {
-                List<Integer> ids = new ArrayList<>();
-                for (JsonElement e : obj.get("or").getAsJsonArray()) {
-                    if (e.isJsonPrimitive()) {
-                        Integer id = nameToId(e.getAsString(), nrta.locations, nrta.locations.size());
-                        if (id != null) ids.add(id);
-                    }
-                }
-                return new TargetInfo(ids, false, true, false);
-            }
-            if (obj.has("const")) {
-                boolean val = obj.get("const").getAsBoolean();
-                return new TargetInfo(new ArrayList<>(), false, false, !val); // isConstFalse
-            }
-            if (obj.has("or")) return new TargetInfo(); // empty
+            return ParsedNrta.TargetInfo.conjunctive(ids);
         }
-        return new TargetInfo();
+        if (obj.has("or")) {
+            List<Integer> ids = new ArrayList<>();
+            for (JsonElement e : obj.get("or").getAsJsonArray()) {
+                if (e.isJsonPrimitive()) {
+                    Integer id = nameToId(e.getAsString(), locs);
+                    if (id != -1) ids.add(id);
+                }
+            }
+            return new ParsedNrta.TargetInfo(ids, "or");
+        }
+        if (obj.has("const")) {
+            boolean val = obj.get("const").getAsBoolean();
+            if (val) {
+                throw new UnsupportedTargetException(
+                    fileName + ": transition '" + transitionKey + "' uses {\"const\": true}, which is unsupported in NRTA",
+                    fileName, Integer.parseInt(transitionKey));
+            } else {
+                return new ParsedNrta.TargetInfo(Collections.emptyList(), "const_false");
+            }
+        }
+        return ParsedNrta.TargetInfo.empty();
     }
 
-    private static class TargetInfo {
-        final List<Integer> ids;
-        final boolean isConjunctive;
-        final boolean isDisjunctive;
-        final boolean isConstFalse;
-
-        TargetInfo() { this.ids = new ArrayList<>(); this.isConjunctive = false; this.isDisjunctive = false; this.isConstFalse = false; }
-        TargetInfo(List<Integer> ids, boolean conj, boolean disj, boolean constFalse) {
-            this.ids = ids; this.isConjunctive = conj; this.isDisjunctive = disj; this.isConstFalse = constFalse;
+    private static List<String> readLocations(JsonObject root) {
+        List<String> locs = new ArrayList<>();
+        if (root.has("l") && root.get("l").isJsonArray()) {
+            for (JsonElement e : root.getAsJsonArray("l")) {
+                if (e.isJsonPrimitive()) {
+                    locs.add(e.getAsString());
+                }
+            }
         }
+        return locs.isEmpty() ? Collections.emptyList() : locs;
     }
 }

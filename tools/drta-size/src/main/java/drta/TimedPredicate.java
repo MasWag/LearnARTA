@@ -132,26 +132,12 @@ public final class TimedPredicate {
     }
 
     /**
-     * Check if a timed word is a witness for this predicate. The word must
-     * be a single TimedLetter (list of size 1). Returns true if the predicate
-     * is true for that letter.
+     * Check whether a single TimedLetter satisfies this predicate.
      */
-    public boolean hasModel(List<TimedLetter> word) {
-        if (word == null || word.isEmpty()) return false;
-        return modelChecker(word);
-    }
-
-    private boolean modelChecker(List<TimedLetter> word) {
-        if (word.isEmpty()) return false;
-        // For single-letter words, just check the predicate.
-        // For multi-letter words, we would need to check each (symbol, delay) pair
-        // against the corresponding domain entry. But predicates are single-letter
-        // constructs; multi-letter acceptance is handled by the SFA automaton.
-        // So we only check the first letter (the "domain symbol") of the word.
-        TimedLetter tl = word.get(0);
-        TimedIntervalSet ivs = this.domain.get(tl.symbol);
-        if (ivs == null) return false;
-        return ivs.containsPoint(tl.delayHalfUnits);
+    public boolean hasModel(TimedLetter letter) {
+        if (letter == null) return false;
+        TimedIntervalSet ivs = this.domain.getOrDefault(letter.symbol, TimedIntervalSet.EMPTY);
+        return !ivs.isEmpty() && ivs.containsPoint(letter.delayHalfUnits);
     }
 
     /** Generate a witnessing TimedLetter, or null if unsatisfiable. */

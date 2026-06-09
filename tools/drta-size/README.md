@@ -1,14 +1,14 @@
 # drta-size
 
-`drta-size` is a small Java utility for inspecting NRTA JSON examples and
-exercising the Symbolic Automata conversion used for minimum-DRTA-size work.
+`drta-size` computes raw NRTA JSON statistics (via a strong parser) and prepares for minimum-DRTA-size work through SFA conversion. The CLI outputs CSV rows, one per input file.
 
-The command-line output is CSV.  Each row reports the raw NRTA size fields that
-are currently available from the input format:
+## CSV Columns
 
 ```text
 file,nrta_locations,nrta_transitions,alphabet_size,initial_count,accepting_count,status
 ```
+
+`status` is `"ok"` when the file parses cleanly and `"error:<reason>"` otherwise (e.g., ARTA-style conjunctive targets).
 
 ## Prerequisites
 
@@ -33,10 +33,9 @@ Example output:
 ```text
 file,nrta_locations,nrta_transitions,alphabet_size,initial_count,accepting_count,status
 atomic-small.json,2,1,1,1,1,ok
-middle.json,3,6,2,1,1,ok
-running.json,3,6,2,1,1,ok
-small.json,3,4,2,2,1,ok
-untimed.json,3,5,2,1,2,ok
+middle.json,3,6,2,1,1,error:contains ARTA-style conjunctive targets (...)
+small.json,3,4,2,2,1,error:contains ARTA-style conjunctive targets (...)
+...
 ```
 
 ## Usage
@@ -55,9 +54,7 @@ untimed.json,3,5,2,1,2,ok
 ./scripts/min-drta-sizes.sh examples/*.json
 ```
 
-The script builds `tools/drta-size` with Maven and then runs the shaded JAR.
-If `vendor/symbolicautomata/models/target` is missing, it runs
-`scripts/bootstrap-symbolicautomata.sh` first.
+The script builds `tools/drta-size` with Maven and then runs the shaded JAR. If `vendor/symbolicautomata/models/target` is missing, it runs `scripts/bootstrap-symbolicautomata.sh` first.
 
 ## Build And Test
 
@@ -66,31 +63,30 @@ mvn -f tools/drta-size/pom.xml test
 mvn -f tools/drta-size/pom.xml clean package
 ```
 
-The package step runs the same unit tests before producing the runnable JAR.
+## Supported NRTA Targets
 
-## What The Utility Does
+The CLI and converter currently support these NRTA-style target types:
 
-1. Parses each NRTA JSON file directly with Gson, preserving the raw structure
-   of fields such as `l`, `sigma`, `tran`, `init`, and `accept`.
-2. Counts locations, transitions, alphabet entries, initial locations, and
-   accepting locations.
-3. Provides a tested NRTA-to-SFA converter in `NrtaToSfaConverter` that builds
-   `automata.sfa.SFA<TimedPredicate, List<TimedLetter>>` values through the
-   vendored Symbolic Automata API.
+| Target format       | Meaning                                         | Status            |
+|---------------------|--------------------------------------------------|-------------------|
+| `"q1"`              | Primitive location target -- one transition to q1 | **Supported**     |
+| `{"or": ["q1","q2"]}` | Disjunctive / nondeterministic branching        | **Supported**     |
+| `{"const": false}`  | Dead-end edge (no successor transition)          | **Supported**     |
 
-The parser intentionally does not reuse the `learn-arta-core` JSON importer,
-because that importer canonicalizes overlapping guards during import.  This
-utility keeps overlapping guards and Boolean target formulas visible so they
-can be studied independently.
+## Rejected Targets
 
-## Current Scope
+The following target types are rejected by the NRTA-to-SFA conversion path:
 
-The CLI currently reports raw NRTA CSV statistics.  The SFA conversion layer is
-implemented and covered by tests, including overlapping intervals, Boolean
-targets, multiple initial locations, and open/closed timed-interval boundaries.
+- `{"and": ["q1","q2"]}` — This is an ARTA-style conjunctive (alternating) target. It belongs to the ARTA formalism, not NRTA. Files containing such targets will produce a CSV row with `status=error:...` and the CLI continues processing subsequent files.
+- `{"const": true}` — Tautologous target has no meaningful interpretation in the NRTA location-target model and is rejected during parsing.
 
-The next step for minimum DRTA size reporting is to run determinization and
-minimization on the converted SFA and add the resulting size to the CSV output.
+## SFA Alphabet Element
+
+The SFA alphabet element is a **timed letter** `(symbol, delay)`, represented by `TimedLetter` (not `List<TimedLetter>`). A timed word is `List<TimedLetter>`. The underlying `BooleanAlgebra<TimedPredicate, TimedLetter>` domain uses single `TimedLetter` elements; each transition guard is a `TimedPredicate` over that domain.
+
+## Minimum DRTA Minimization
+
+Minimum DRTA minimization (`SFA.minimize`) is **not yet added** to the CLI. The current scope ends at conversion from NRTA JSON to SFA, with conjunctive-target rejection and parse-time error reporting fully implemented. The `SFA.minimize` call is reserved for a future milestone.
 
 ## Directory Layout
 
@@ -99,8 +95,8 @@ tools/drta-size/
   pom.xml
   README.md
   src/main/java/drta/DrtSize.java
-  src/main/java/drta/NrtaToSfaConverter.java
-  src/main/java/drta/Timed*.java
+  src/main/java/drta/NrtaToSfaConverter.java       (parser + SFA converter)
+  src/main/java/drta/Timed*.java                    (TimedLetter, TimedPredicate, etc.)
   src/test/java/drta/*.java
   src/test/resources/drta/example.json
 ```
@@ -112,9 +108,23 @@ scripts/bootstrap-symbolicautomata.sh
 scripts/min-drta-sizes.sh
 ```
 
-## Adding NRTA Format Support
+## Architecture
 
-The parser reads `l`, `sigma`, `tran`, `init`, and `accept` directly from the
-raw JSON tree.  To support another field, update `DrtSize.processFile`, extend
-`CsvRow` if the field should appear in the CSV, and add a focused test under
-`tools/drta-size/src/test/java/drta`.
+The data flow is:
+
+```
+NRTA JSON file  -->  DrtSize.processFile()  -->  CSV row
+                          |
+                    NrtaToSfaConverter.parseNrtasJson()
+                          |   <-- detects {"and":...} and {const:true} errors
+                  ParsedNrta + raw transitions
+                          |
+                    NrtaToSfaConverter.toSfa()
+                          |   <-- rejects conjunctive targets here too
+                  SFA<TimedPredicate, TimedLetter>
+```
+
+The parser (`parseNrtasJson`) separates parsing from conversion so that:
+1. Files with conjunctive targets can produce error CSV rows without crashing the whole batch.
+2. The converter gets a strongly-typed `ParsedNrta` structure rather than raw JSON manipulation.
+3. Parse/conversion errors include file name and transition context for debugging.

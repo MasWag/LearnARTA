@@ -11,7 +11,7 @@ import java.util.*;
  *
  * The domain alphabet is {a, b} in most tests.  Predicates are finite maps
  * from symbol names to TimedIntervalSets.  Boolean operations work pointwise
- * on domain entries.
+ * on domain entries. hasModel() now takes a single TimedLetter (not List).
  */
 public class TimedPredicateTest {
 
@@ -86,15 +86,13 @@ public class TimedPredicateTest {
         assertTrue(atom.isSatisfiable());
 
         // Should have model for this letter
-        assertTrue(atom.hasModel(Collections.singletonList(letter)));
+        assertTrue(atom.hasModel(letter));
 
         // Should not have model for a different letter
-        assertFalse(atom.hasModel(Collections.singletonList(
-            TimedLetter.of("b", 0))));
+        assertFalse(atom.hasModel(TimedLetter.of("b", 0)));
 
         // Should not have model for a different delay
-        assertFalse(atom.hasModel(Collections.singletonList(
-            TimedLetter.of("a", 1))));
+        assertFalse(atom.hasModel(TimedLetter.of("a", 1)));
     }
 
     // ---------- Guard predicate tests ----------
@@ -109,20 +107,15 @@ public class TimedPredicateTest {
         // Should have model for (a, 0), (a, 1), (a, 2)
         // These are in half-units: 0, 2, 4
         // Actually guard is [0,2] in string time => [0,4] half-units
-        assertTrue(pred.hasModel(Collections.singletonList(
-            TimedLetter.ofHalf("a", 0))));
-        assertTrue(pred.hasModel(Collections.singletonList(
-            TimedLetter.ofHalf("a", 4))));
-        assertTrue(pred.hasModel(Collections.singletonList(
-            TimedLetter.ofHalf("a", 2))));
+        assertTrue(pred.hasModel(TimedLetter.ofHalf("a", 0)));
+        assertTrue(pred.hasModel(TimedLetter.ofHalf("a", 4)));
+        assertTrue(pred.hasModel(TimedLetter.ofHalf("a", 2)));
 
         // Should not have model for (a, 3) => 6 half-units
-        assertFalse(pred.hasModel(Collections.singletonList(
-            TimedLetter.ofHalf("a", 6))));
+        assertFalse(pred.hasModel(TimedLetter.ofHalf("a", 6)));
 
         // Should not have model for symbol 'b' at any delay
-        assertFalse(pred.hasModel(Collections.singletonList(
-            TimedLetter.ofHalf("b", 0))));
+        assertFalse(pred.hasModel(TimedLetter.ofHalf("b", 0)));
     }
 
     @Test
@@ -138,14 +131,11 @@ public class TimedPredicateTest {
             "a", TimedInterval.upFrom(1), alphabet);
 
         // Should have model for (a, 1) => 2 half-units
-        assertTrue(pred.hasModel(Collections.singletonList(
-            TimedLetter.ofHalf("a", 2))));
-        assertTrue(pred.hasModel(Collections.singletonList(
-            TimedLetter.ofHalf("a", 10))));
+        assertTrue(pred.hasModel(TimedLetter.ofHalf("a", 2)));
+        assertTrue(pred.hasModel(TimedLetter.ofHalf("a", 10)));
 
         // Should not have model for (a, 0) => 0 half-units
-        assertFalse(pred.hasModel(Collections.singletonList(
-            TimedLetter.ofHalf("a", 0))));
+        assertFalse(pred.hasModel(TimedLetter.ofHalf("a", 0)));
     }
 
     // ---------- Two-symbol Boolean operations ----------
@@ -160,10 +150,8 @@ public class TimedPredicateTest {
         TimedPredicate andPred = a1.and(b1);
 
         assertFalse(andPred.isSatisfiable());
-        assertFalse(andPred.hasModel(Collections.singletonList(
-            TimedLetter.ofHalf("a", 0))));
-        assertFalse(andPred.hasModel(Collections.singletonList(
-            TimedLetter.ofHalf("b", 0))));
+        assertFalse(andPred.hasModel(TimedLetter.ofHalf("a", 0)));
+        assertFalse(andPred.hasModel(TimedLetter.ofHalf("b", 0)));
     }
 
     @Test
@@ -176,12 +164,9 @@ public class TimedPredicateTest {
         TimedPredicate orPred = a1.or(b1);
 
         assertTrue(orPred.isSatisfiable());
-        assertTrue(orPred.hasModel(Collections.singletonList(
-            TimedLetter.ofHalf("a", 0))));
-        assertTrue(orPred.hasModel(Collections.singletonList(
-            TimedLetter.ofHalf("b", 10))));
-        assertFalse(orPred.hasModel(Collections.singletonList(
-            TimedLetter.ofHalf("a", 1))));
+        assertTrue(orPred.hasModel(TimedLetter.ofHalf("a", 0)));
+        assertTrue(orPred.hasModel(TimedLetter.ofHalf("b", 10)));
+        assertFalse(orPred.hasModel(TimedLetter.ofHalf("a", 1)));
     }
 
     @Test
@@ -193,10 +178,8 @@ public class TimedPredicateTest {
 
         // 'a' part: [0,+inf)' => empty
         // 'b' part: empty' => full
-        assertTrue(notPred.hasModel(Collections.singletonList(
-            TimedLetter.ofHalf("b", 0))));
-        assertFalse(notPred.hasModel(Collections.singletonList(
-            TimedLetter.ofHalf("a", 0))));
+        assertTrue(notPred.hasModel(TimedLetter.ofHalf("b", 0)));
+        assertFalse(notPred.hasModel(TimedLetter.ofHalf("a", 0)));
     }
 
     // ---- equivalence tests ----

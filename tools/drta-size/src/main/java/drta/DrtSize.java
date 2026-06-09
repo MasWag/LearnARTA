@@ -9,12 +9,14 @@ import java.util.*;
 import java.util.stream.*;
 
 /**
- * DrtSize -- raw NRTA JSON parser and CSV reporter.
+ * DrtSize -- parses NRTA JSON files and produces CSV output.
  *
- * This tool parses NRTA JSON files and outputs statistics about each automaton
- * as CSV rows.  It preserves the raw structure of the input JSON (including
- * nondeterministic Boolean targets and overlapping guards) and does not
- * canonicalize or rewrite the automaton.
+ * The CLI now uses {@link NrtaToSfaConverter} for parsing, which:
+ * <ul>
+ *   <li>Supports NRTA targets: primitive location strings, {@code {"or": [...]}} (nondeterminism), and {@code {"const": false}}.</li>
+ *   <li><b>Rejects</b> ARTA-style conjunctive target {@code {"and": [...]}} with status {@code "error" + reason}.</li>
+ *   <li><b>Rejects</b> {@code {"const": true}} targets as they are meaningless in NRTA.</li>
+ * </ul>
  *
  * CSV columns:
  *   file               -- input file path
@@ -23,7 +25,7 @@ import java.util.stream.*;
  *   alphabet_size      -- number of distinct input symbols (from sigma field)
  *   initial_count      -- number of initial states
  *   accepting_count    -- number of accepting states
- *   status             -- "ok" if parsing succeeded, "error" with reason
+ *   status             -- "ok" if parsing succeeded, "error:<reason>" otherwise
  */
 public class DrtSize {
 
@@ -76,57 +78,48 @@ public class DrtSize {
         try {
             JsonObject root = JsonParser.parseString(json).getAsJsonObject();
 
-            int locations = 0;
-            if (root.has("l") && root.get("l").isJsonArray()) {
-                locations = root.getAsJsonArray("l").size();
+            // First check for conjunctive targets (ARTA-style) before parsing
+            if (NrtaToSfaConverter.hasConjunctiveTargets(root)) {
+                return new CsvRow(
+                    filename,
+                    0, 0, 0, 0, 0,
+                    "error:contains ARTA-style conjunctive targets ({\"and\": [...]})"
+                );
             }
 
-            int transitions = 0;
-            if (root.has("tran") && root.get("tran").isJsonObject()) {
-                transitions = root.getAsJsonObject("tran").size();
-            }
-
-            int alphabetSize = 0;
-            if (root.has("sigma") && root.get("sigma").isJsonArray()) {
-                alphabetSize = root.getAsJsonArray("sigma").size();
-            }
-
-            int initialCount = 0;
-            if (root.has("init")) {
-                JsonElement initEl = root.get("init");
-                if (initEl.isJsonArray()) {
-                    initialCount = initEl.getAsJsonArray().size();
-                } else if (initEl.isJsonObject()) {
-                    initialCount = -1;
-                }
-            }
-
-            int acceptingCount = 0;
-            if (root.has("accept") && root.get("accept").isJsonArray()) {
-                acceptingCount = root.getAsJsonArray("accept").size();
-            }
+            // Parse using the NRTA parser for full context and error messages
+            NrtaToSfaConverter.ParsedNrta parsed = NrtaToSfaConverter.parseNrtasJson(root, filename);
 
             return new CsvRow(
                 filename,
-                locations,
-                transitions,
-                alphabetSize,
-                initialCount,
-                acceptingCount,
+                parsed.locationCount(),
+                parsed.getTransitions().size(),
+                parsed.sigma.length,
+                parsed.initialLocations.length,
+                parsed.acceptingLocations.length,
                 "ok"
             );
 
+        } catch (NrtaToSfaConverter.UnsupportedTargetException e) {
+            return new CsvRow(
+                filename,
+                0, 0, 0, 0, 0,
+                "error:" + e.getMessage()
+            );
         } catch (Exception e) {
             return new CsvRow(
                 filename,
-                0,
-                0,
-                0,
-                0,
-                0,
+                0, 0, 0, 0, 0,
                 "error:" + e.getMessage()
             );
         }
+    }
+
+    /** Exposes parsed NRTA for test use */
+    static NrtaToSfaConverter.ParsedNrta parseForTest(Path file) throws IOException {
+        String json = new String(Files.readAllBytes(file), StandardCharsets.UTF_8);
+        JsonObject root = JsonParser.parseString(json).getAsJsonObject();
+        return NrtaToSfaConverter.parseNrtasJson(root, file.getFileName().toString());
     }
 
     static class CsvRow {

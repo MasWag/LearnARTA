@@ -9,14 +9,16 @@ import java.util.*;
 /**
  * TimedLetterBooleanAlgebra
  *
- * Extends symbolicautomata's BooleanAlgebra<TimedPredicate, List<TimedLetter>>.
- * This is a finite Boolean algebra where the domain S is the set of all
- * TimedLetters (symbol, delay) and P is the set of predicates over that domain.
+ * Extends symbolicautomata's BooleanAlgebra<TimedPredicate, TimedLetter>.
+ * The domain S is the set of all TimedLetters (symbol, delay) and P is the
+ * set of predicates over that domain. Each SFA transition guard is a
+ * TimedPredicate; each alphabet element consumed by the automaton is a single
+ * TimedLetter.
  *
  * The domain alphabet must be supplied at construction time.  All predicates
  * are over this fixed alphabet.
  */
-public class TimedLetterBooleanAlgebra extends BooleanAlgebra<TimedPredicate, List<TimedLetter>> {
+public class TimedLetterBooleanAlgebra extends BooleanAlgebra<TimedPredicate, TimedLetter> {
 
     private final Set<String> alphabet;
     private final TimedPredicate truePred;
@@ -36,11 +38,11 @@ public class TimedLetterBooleanAlgebra extends BooleanAlgebra<TimedPredicate, Li
     }
 
     @Override
-    public TimedPredicate MkAtom(List<TimedLetter> s) {
-        if (s == null || s.size() != 1) {
+    public TimedPredicate MkAtom(TimedLetter s) {
+        if (s == null) {
             return falsePred;
         }
-        return TimedPredicate.atom(s.get(0), alphabet);
+        return TimedPredicate.atom(s, alphabet);
     }
 
     @Override
@@ -111,30 +113,28 @@ public class TimedLetterBooleanAlgebra extends BooleanAlgebra<TimedPredicate, Li
     }
 
     @Override
-    public boolean HasModel(TimedPredicate p1, List<TimedLetter> el) throws TimeoutException {
+    public boolean HasModel(TimedPredicate p1, TimedLetter el) throws TimeoutException {
         return p1.hasModel(el);
     }
 
     @Override
-    public boolean HasModel(TimedPredicate p1, List<TimedLetter> el1, List<TimedLetter> el2)
+    public boolean HasModel(TimedPredicate p1, TimedLetter el1, TimedLetter el2)
             throws TimeoutException {
         throw new UnsupportedOperationException("TimedLetterBooleanAlgebra is unary");
     }
 
     @Override
-    public List<TimedLetter> generateWitness(TimedPredicate p1) throws TimeoutException {
-        TimedLetter w = p1.generateWitness();
-        if (w == null) return Collections.emptyList();
-        return Collections.singletonList(w);
+    public TimedLetter generateWitness(TimedPredicate p1) throws TimeoutException {
+        return p1.generateWitness();
     }
 
     @Override
-    public Pair<List<TimedLetter>, List<TimedLetter>> generateWitnesses(TimedPredicate p1)
+    public Pair<TimedLetter, TimedLetter> generateWitnesses(TimedPredicate p1)
             throws TimeoutException {
         throw new UnsupportedOperationException("TimedLetterBooleanAlgebra is unary");
     }
 
-    public TimedPredicate MkNotSingleton(TimedPredicate p1, List<TimedLetter> el) throws TimeoutException {
+    public TimedPredicate MkNotSingleton(TimedPredicate p1, TimedLetter el) throws TimeoutException {
         TimedPredicate atomPred = this.MkAtom(el);
         return this.MkAnd(this.MkNot(atomPred), p1);
     }
