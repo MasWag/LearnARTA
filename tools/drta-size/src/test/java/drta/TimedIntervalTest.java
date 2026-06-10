@@ -168,7 +168,7 @@ public class TimedIntervalTest {
         assertEquals(2L, inter.lo);
         assertEquals(false, inter.loOpen);
         assertEquals(4L, inter.hi);
-        assertEquals(true, inter.hiOpen);
+        assertEquals(false, inter.hiOpen);
     }
 
     @Test

@@ -84,9 +84,13 @@ The following target types are rejected by the NRTA-to-SFA conversion path:
 
 The SFA alphabet element is a **timed letter** `(symbol, delay)`, represented by `TimedLetter` (not `List<TimedLetter>`). A timed word is `List<TimedLetter>`. The underlying `BooleanAlgebra<TimedPredicate, TimedLetter>` domain uses single `TimedLetter` elements; each transition guard is a `TimedPredicate` over that domain.
 
+## Interval Operations
+
+Timed interval operations are exact over the internal half-unit representation: standard-time integer `t` is stored as `2*t`, and open/closed endpoints are tracked explicitly. `TimedIntervalSet` canonicalizes finite unions before Boolean-algebra operations so equivalent representations such as `[0,1) U [1,+)` and `[0,+)` compare equal.
+
 ## Minimum DRTA Minimization
 
-Minimum DRTA minimization (`SFA.minimize`) is **not yet added** to the CLI. The current scope ends at conversion from NRTA JSON to SFA, with conjunctive-target rejection and parse-time error reporting fully implemented. The `SFA.minimize` call is reserved for a future milestone.
+Minimum DRTA minimization (`SFA.minimize`) is **not yet added** to the CLI in this milestone. The current scope ends at conversion from NRTA JSON to SFA plus exact interval Boolean operations, with conjunctive-target rejection and parse-time error reporting fully implemented. The `SFA.minimize` call is reserved for a future milestone.
 
 ## Directory Layout
 

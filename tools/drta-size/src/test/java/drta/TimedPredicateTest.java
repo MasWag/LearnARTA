@@ -203,7 +203,6 @@ public class TimedPredicateTest {
 
         assertFalse(a1.areEquivalent(a3));
     }
-
     // ---- witness generation ----
 
     @Test
@@ -221,5 +220,106 @@ public class TimedPredicateTest {
     public void testGenerateWitnessNoSatisfiable() {
         TimedPredicate pred = TimedPredicate.falsePredicate(alphabet);
         assertNull(pred.generateWitness());
+    }
+
+    // ---- canonicalization equivalence tests ----
+
+    @Test
+    public void testAdjacentIntervalsMergeToSingleInterval() {
+        // [0,4) U [4,+inf) should normalize to [0,+inf) (FULL)
+        TimedPredicate p1 = TimedPredicate.fromGuard(
+            "a", TimedInterval.closedOpen(0, 4), alphabet);
+        TimedPredicate p2 = TimedPredicate.fromGuard(
+            "a", TimedInterval.upFrom(4), alphabet);
+        TimedPredicate merged = p1.or(p2);
+
+        // Both symbols should map to FULL
+        assertTrue(merged.domain.get("a").isFull());
+    }
+
+    @Test
+    public void testUnionOfHalfAndUpFromOpensFull() {
+        // [0,1) in string-time ⇒ [0,2) in half-units; [1,+inf) ⇒ upFrom(2)
+        TimedPredicate a = TimedPredicate.fromGuard(
+            "a", TimedInterval.closedOpen(0, 2), alphabet);
+        TimedPredicate b = TimedPredicate.fromGuard(
+            "a", TimedInterval.upFrom(2), alphabet);
+        TimedPredicate result = a.or(b);
+
+        assertTrue(result.domain.get("a").isFull());
+    }
+
+    @Test
+    public void testComplementBoundaryCorrect() {
+        // complement of [0,+) should be empty
+        TimedPredicate fullPred = TimedPredicate.fromGuard(
+            "a", TimedInterval.upFrom(0), alphabet);
+        TimedPredicate comp = fullPred.notFullDomain();
+
+        // 'a' part should be EMPTY
+        assertFalse(comp.domain.get("a").satisfies());
+    }
+
+    @Test
+    public void testCanonicalEqualityAfterNormalize() {
+        // Two ways to build the same interval: via individual unions or directly
+        TimedIntervalSet s1 = TimedIntervalSet.normalize(Arrays.asList(
+            TimedInterval.closedOpen(0, 4),
+            TimedInterval.upFrom(4)
+        ));
+        TimedIntervalSet s2 = TimedIntervalSet.FULL;
+
+        assertEquals(s1, s2); // structural equality after canonicalization
+    }
+
+    @Test
+    public void testSplitFiniteIntervalsEquivalentToSingleInterval() {
+        TimedPredicate left = TimedPredicate.fromGuard(
+            "a", TimedInterval.closedOpen(0, 2), alphabet);
+        TimedPredicate right = TimedPredicate.fromGuard(
+            "a", TimedInterval.closedOpen(2, 4), alphabet);
+        TimedPredicate split = left.or(right);
+        TimedPredicate direct = TimedPredicate.fromGuard(
+            "a", TimedInterval.closedOpen(0, 4), alphabet);
+
+        assertTrue(split.areEquivalent(direct));
+        assertEquals(direct.domain.get("a"), split.domain.get("a"));
+    }
+
+    @Test
+    public void testSplitFullIntervalsEquivalentToFullInterval() {
+        TimedPredicate left = TimedPredicate.fromGuard(
+            "a", TimedInterval.closedOpen(0, 2), alphabet);
+        TimedPredicate right = TimedPredicate.fromGuard(
+            "a", TimedInterval.upFrom(2), alphabet);
+        TimedPredicate split = left.or(right);
+        TimedPredicate direct = TimedPredicate.fromGuard(
+            "a", TimedInterval.upFrom(0), alphabet);
+
+        assertTrue(split.areEquivalent(direct));
+        assertTrue(split.domain.get("a").isFull());
+    }
+
+    @Test
+    public void testPredicateComplementOfEmptyIsTrue() {
+        TimedPredicate emptyPred = TimedPredicate.falsePredicate(alphabet);
+        TimedPredicate comp = emptyPred.notFullDomain();
+
+        assertTrue(comp.isSatisfiable());
+        assertTrue(comp.domain.get("a").isFull());
+        assertTrue(comp.domain.get("b").isFull());
+    }
+
+    @Test
+    public void testIntersectionProducesCanonicalBoundaryResult() {
+        TimedPredicate p1 = TimedPredicate.fromGuard(
+            "a", TimedInterval.openClosed(0, 4), alphabet);
+        TimedPredicate p2 = TimedPredicate.fromGuard(
+            "a", TimedInterval.closed(4, 6), alphabet);
+
+        TimedPredicate inter = p1.and(p2);
+        assertTrue(inter.hasModel(TimedLetter.ofHalf("a", 4)));
+        assertFalse(inter.hasModel(TimedLetter.ofHalf("a", 3)));
+        assertFalse(inter.hasModel(TimedLetter.ofHalf("a", 5)));
     }
 }

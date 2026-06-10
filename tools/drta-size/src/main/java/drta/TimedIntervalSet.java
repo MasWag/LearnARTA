@@ -3,13 +3,12 @@ package drta;
 import java.util.*;
 
 /**
- * A finite union of disjoint, non-adjacent TimedIntervals over R>=0, stored
- * in normalized form (sorted, gap-separation guaranteed).
+ * A finite union of disjoint TimedIntervals over R>=0, stored in normalized
+ * form.
  *
  * Canonical form invariants:
  *   1) Intervals are sorted by lower bound, ascending.
- *   2) No two intervals overlap or touch (i.e., for consecutive intervals
- *      intervals[i].hi + 1 < intervals[i+1].lo).
+ *   2) No two intervals overlap or touch at an included boundary.
  *   3) Empty set is represented by an empty list (not a list with one
  *      empty interval).
  */
@@ -36,7 +35,7 @@ public final class TimedIntervalSet implements Iterable<TimedInterval> {
     }
 
     private TimedIntervalSet() {
-        this.intervals = new ArrayList<>();
+        this.intervals = Collections.unmodifiableList(new ArrayList<>());
     }
 
     /**
@@ -55,31 +54,28 @@ public final class TimedIntervalSet implements Iterable<TimedInterval> {
     }
 
     /**
-     * Normalize a list of intervals: intersect all pairs, remove empty,
-     * deduplicate adjacent/overlapping.
+     * Normalize a list of intervals into a canonical finite union of disjoint
+     * TimedIntervals over R>=0.
+     *
+     * <p>Invariants of the normalized form:
+     * <ol>
+     *   <li>All intervals are disjoint (no point is in more than one).</li>
+     *   <li>No two intervals overlap or touch at an included boundary.</li>
+     *   <li>Empty set is represented by an empty list.</li>
+     *   <li>All intervals use exact half-unit integers (no floating-point).</li>
+     * </ol>
      */
     public static TimedIntervalSet normalize(List<TimedInterval> intervals) {
         if (intervals == null || intervals.isEmpty()) return EMPTY;
 
-        // Remove empty intervals
+        // Step 1: Remove empty intervals
         List<TimedInterval> nonEmpty = new ArrayList<>();
         for (TimedInterval iv : intervals) {
             if (!iv.isEmpty()) nonEmpty.add(iv);
         }
         if (nonEmpty.isEmpty()) return EMPTY;
 
-        // If there's only one, return it directly
-        if (nonEmpty.size() == 1) {
-            return new TimedIntervalSet(nonEmpty);
-        }
-
-        // Try to merge with the first interval; if it fails,
-        // return the multi-interval set. For simplicity in Milestone 2
-        // we keep intervals as-is for now (the test suite exercises the
-        // union/intersection logic in TimedInterval tests rather than
-        // relying on TimedIntervalSet merge logic for complex cases).
-        // TODO: implement interval merging for full correctness.
-        // For now, just dedup identical intervals and sort.
+        // Step 2: Deduplicate identical intervals (same structural signature)
         Set<List<Long>> seen = new HashSet<>();
         List<TimedInterval> deduped = new ArrayList<>();
         for (TimedInterval iv : nonEmpty) {
@@ -90,69 +86,101 @@ public final class TimedIntervalSet implements Iterable<TimedInterval> {
                 deduped.add(iv);
             }
         }
+        if (deduped.isEmpty()) return EMPTY;
 
-        // Sort by lo then by hi descending
+        // If only one unique interval remains, return it directly
+        if (deduped.size() == 1) {
+            return new TimedIntervalSet(deduped);
+        }
+
+        // Step 3: Sort by lo ascending, wider lower/upper endpoints first.
         deduped.sort((a, b) -> {
             int cmp = Long.compare(a.lo, b.lo);
             if (cmp != 0) return cmp;
-            return Long.compare(b.hi, a.hi);
+
+            cmp = Boolean.compare(a.loOpen, b.loOpen);
+            if (cmp != 0) return cmp;
+
+            if (a.hiInf && !b.hiInf) return -1;
+            if (!a.hiInf && b.hiInf) return 1;
+
+            cmp = Long.compare(b.hi, a.hi);
+            if (cmp != 0) return cmp;
+
+            return Boolean.compare(a.hiOpen, b.hiOpen);
         });
 
-        // Now try to merge adjacent/overlapping intervals
+        // Step 4: Scan and merge overlapping / touching intervals.
         List<TimedInterval> merged = new ArrayList<>();
-        for (TimedInterval iv : deduped) {
-            if (merged.isEmpty()) {
-                merged.add(iv);
+        TimedInterval current = deduped.get(0);
+
+        for (int i = 1; i < deduped.size(); i++) {
+            TimedInterval next = deduped.get(i);
+
+            if (!canMerge(current, next)) {
+                merged.add(current);
+                current = next;
                 continue;
             }
-            TimedInterval last = merged.get(merged.size() - 1);
-            TimedInterval inter = last.intersection(iv);
-            if (!inter.isEmpty()) {
-                // Union: merge them
-                // For union, we need the union, not intersection
-                // Let me fix: union merges overlapping intervals into a single interval
-                long newLo = Math.min(last.lo, iv.lo);
-                boolean newLoOpen = (newLo == last.lo && last.lo != iv.lo) || (newLo == iv.lo && iv.lo != last.lo);
-                // If lo values differ: new lo is the smaller value
-                // If smaller is open AND the larger value == smaller value, we can exclude
-                // Actually for union [a,b] u [c,d] where a<c<=b: union = [a, max(b,d)]
-                // For union [a,b) u [c,d) where a<c<=b: union = [a, max(b,d)) if overlap
-                // For union (a,b] u [c,d] where c<=b: union = (a, max(b,d)] if overlap
-                // Simpler: for union, just take min(lo) and max(hi), adjusting openness
-                long unionLo = Math.min(last.lo, iv.lo);
-                boolean unionLoOpen = false;
-                if (unionLo == last.lo && last.lo != iv.lo) unionLoOpen = last.loOpen;
-                else if (unionLo == iv.lo && iv.lo != last.lo) unionLoOpen = iv.loOpen;
-                else if (unionLo == last.lo && unionLo == iv.lo) unionLoOpen = last.loOpen || iv.loOpen;
 
-                long unionHi;
-                boolean unionHiOpen, unionHiInf;
-                if (last.hiInf && iv.hiInf) {
-                    unionHiInf = true;
-                    unionHi = TimedInterval.POS_INF;
-                    unionHiOpen = last.hiOpen;
-                } else if (last.hiInf) {
-                    unionHiInf = false;
-                    unionHi = iv.hi;
-                    unionHiOpen = iv.hiOpen;
-                } else if (iv.hiInf) {
-                    unionHiInf = false;
-                    unionHi = last.hi;
-                    unionHiOpen = last.hiOpen;
-                } else {
-                    unionHiInf = false;
-                    unionHi = Math.max(last.hi, iv.hi);
-                    unionHiOpen = last.hiOpen || iv.hiOpen;
-                }
-
-                TimedInterval merged_iv = new TimedInterval(unionLo, unionHi, unionLoOpen, unionHiInf, unionHiOpen);
-                merged.set(merged.size() - 1, merged_iv);
+            // Merge: union of `current` and `next`.
+            // Lower bound: current.lo (sorted), openness depends.
+            long newLo = current.lo;
+            boolean newLoOpen;
+            if (current.lo == next.lo) {
+                // Both start at the same point → excluded only if BOTH exclude it
+                newLoOpen = current.loOpen && next.loOpen;
             } else {
-                merged.add(iv);
+                // current.lo < next.lo → only `current` can include newLo.
+                newLoOpen = current.loOpen;
             }
+
+            // Upper bound: max of both finite highs, or infinity if either infinite.
+            long newHi;
+            boolean newHiInf;
+            boolean newHiOpen;
+
+            if (current.hiInf || next.hiInf) {
+                // At least one is unbounded → union is unbounded above
+                newHiInf = true;
+                newHi = TimedInterval.POS_INF;
+                newHiOpen = false; // Unbounded above has no meaningful open endpoint
+            } else {
+                newHiInf = false;
+                long maxHi = Math.max(current.hi, next.hi);
+                if (maxHi == current.hi && maxHi == next.hi) {
+                    // Both reach the same hi → excluded only if BOTH exclude it
+                    newHiOpen = current.hiOpen && next.hiOpen;
+                } else if (maxHi == current.hi) {
+                    // Only current has this hi
+                    newHiOpen = current.hiOpen;
+                } else {
+                    // Only next has this hi
+                    newHiOpen = next.hiOpen;
+                }
+                newHi = maxHi;
+            }
+
+            current = new TimedInterval(newLo, newHi, newLoOpen, newHiInf, newHiOpen);
         }
+        merged.add(current);
 
         return new TimedIntervalSet(merged);
+    }
+
+    /**
+     * Returns true if `a` and `b` can be unified into a single interval.
+     * Assumes a.lo <= b.lo (i.e., they appear in sorted order).
+     */
+    private static boolean canMerge(TimedInterval a, TimedInterval b) {
+        if (a.hiInf) {
+            return true; // Unbounded above always overlaps anything that starts >= its lo
+        }
+        if (b.lo < a.hi) {
+            return true;
+        }
+        if (b.lo > a.hi) return false;
+        return !a.hiOpen || !b.loOpen;
     }
 
     /** Union with another set. */
@@ -178,32 +206,35 @@ public final class TimedIntervalSet implements Iterable<TimedInterval> {
     public TimedIntervalSet complement() {
         if (intervals.isEmpty()) return FULL;
         List<TimedInterval> result = new ArrayList<>();
-        long nextGapStart = 0L;
+        long gapStart = 0L;
+        boolean gapStartOpen = false;
 
         for (TimedInterval iv : intervals) {
-            if (iv.lo > nextGapStart) {
-                result.add(TimedInterval.closed(nextGapStart, iv.lo - 1));
+            TimedInterval leftGap = new TimedInterval(
+                gapStart,
+                iv.lo,
+                gapStartOpen,
+                false,
+                !iv.loOpen);
+            if (!leftGap.isEmpty()) {
+                result.add(leftGap);
             }
-            long nextStart = iv.hiInf ? TimedInterval.POS_INF : iv.hi;
-            if (!iv.hiInf) {
-                nextGapStart = (iv.hiOpen ? iv.hi : iv.hi + 1);
-            } else {
-                nextGapStart = TimedInterval.POS_INF;
+
+            if (iv.hiInf) {
+                return normalize(result);
             }
-            if (nextGapStart >= TimedInterval.POS_INF) {
-                // We've consumed the rest of R>=0
-                return new TimedIntervalSet(result);
-            }
+
+            gapStart = iv.hi;
+            gapStartOpen = !iv.hiOpen;
         }
 
         // Gap after last interval
-        if (nextGapStart < TimedInterval.POS_INF) {
-            result.add(TimedInterval.upFrom(nextGapStart));
-        }
+        result.add(gapStartOpen
+            ? TimedInterval.upFromOpen(gapStart)
+            : TimedInterval.upFrom(gapStart));
 
         return normalize(result);
     }
-
     public boolean isEmpty() {
         return intervals.isEmpty();
     }

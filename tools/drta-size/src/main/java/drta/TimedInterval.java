@@ -75,15 +75,8 @@ public final class TimedInterval {
     }
 
     public TimedIntervalSet complement() {
-        if (isEmpty()) return TimedIntervalSet.FULL;
-        java.util.ArrayList<TimedInterval> parts = new java.util.ArrayList<>();
-        if (lo > 0) {
-            parts.add(TimedInterval.closed(0, loOpen ? lo : lo - 1));
-        }
-        if (!hiInf) {
-            parts.add(TimedInterval.upFrom(hiOpen ? hi : hi + 1));
-        }
-        return TimedIntervalSet.normalize(parts);
+        return TimedIntervalSet.normalize(
+            java.util.Collections.singletonList(this)).complement();
     }
 
     public TimedInterval intersection(TimedInterval other) {
@@ -110,9 +103,17 @@ public final class TimedInterval {
             newHiInf = false;
             newHi = this.hi;
             newHiOpen |= this.hiOpen;
+        } else if (this.hi < other.hi) {
+            newHiInf = false;
+            newHi = this.hi;
+            newHiOpen = this.hiOpen;
+        } else if (other.hi < this.hi) {
+            newHiInf = false;
+            newHi = other.hi;
+            newHiOpen = other.hiOpen;
         } else {
             newHiInf = false;
-            newHi = Math.min(this.hi, other.hi);
+            newHi = this.hi;
             newHiOpen = this.hiOpen || other.hiOpen;
         }
 
@@ -130,7 +131,11 @@ public final class TimedInterval {
         if (this == o) return true;
         if (!(o instanceof TimedInterval)) return false;
         TimedInterval that = (TimedInterval) o;
-        return lo == that.lo && hi == that.hi && loOpen == that.loOpen && hiOpen == that.hiOpen;
+        return lo == that.lo
+            && hi == that.hi
+            && loOpen == that.loOpen
+            && hiInf == that.hiInf
+            && hiOpen == that.hiOpen;
     }
 
     @Override
