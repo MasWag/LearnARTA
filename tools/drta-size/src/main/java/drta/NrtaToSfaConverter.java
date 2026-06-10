@@ -119,6 +119,67 @@ public class NrtaToSfaConverter {
     }
 
     /**
+     * Result of running SFA minimization to compute minimum DRTA size.
+     * <p>
+     * {@code minDrtaTransitions} is -1 when the underlying SFA API does not
+     * expose a meaningful transition count after minimization.  The state count
+     * ({@code minDrtaStates}) is always meaningful.
+     * </p>
+     */
+    public static class MinimizationResult {
+        public final int sfaStates;
+        public final int sfaTransitions;
+        public final int minDrtaStates;
+        public final int minDrtaTransitions;
+        public final long timeMs;
+
+        public MinimizationResult(int sfaStates, int sfaTransitions,
+                                  int minDrtaStates, int minDrtaTransitions,
+                                  long timeMs) {
+            this.sfaStates = sfaStates;
+            this.sfaTransitions = sfaTransitions;
+            this.minDrtaStates = minDrtaStates;
+            this.minDrtaTransitions = minDrtaTransitions;
+            this.timeMs = timeMs;
+        }
+    }
+
+    /**
+     * Build an SFA from a parsed NRTA, minimize it, and return the result.
+     *
+     * <p>
+     * The SFA minimization pipeline in {@code getMinimalOf} is:
+     * {@code removeEpsilon -> determinize -> mkTotal (adds global sink state) -> partition refinement}.
+     * The sink state is added by {@code mkTotal} before minimization, so
+     * {@code minDrtaStates} counts ALL states in the minimized SFA, including
+     * the totalization sink state required for complete deterministic semantics.
+     * Do not subtract or exclude the sink state without an explicit convention.
+     * </p>
+     *
+     * @throws TimeoutException if the underlying SAT solver times out
+     */
+    public static MinimizationResult computeMinimumDrtaSize(ParsedNrta nrta,
+                                                            TimedLetterBooleanAlgebra ba)
+            throws TimeoutException {
+        long t0 = System.currentTimeMillis();
+
+        SFA<TimedPredicate, TimedLetter> sfa = toSfa(nrta, ba);
+
+        int sfaStates = sfa.stateCount();
+        int sfaTransitions = sfa.getTransitions().size();
+
+        SFA<TimedPredicate, TimedLetter> minimized = SFA.getMinimalOf(sfa, ba);
+
+        int minStates = minimized.stateCount();
+        int minTransitions = -1;
+
+        long elapsed = System.currentTimeMillis() - t0;
+
+        return new MinimizationResult(sfaStates, sfaTransitions,
+                                      minStates, minTransitions, elapsed);
+    }
+
+    /**
      * Parse raw NRTA JSON into a ParsedNrta.
      */
     public static ParsedNrta parseNrtasJson(JsonObject root, String fileName) {

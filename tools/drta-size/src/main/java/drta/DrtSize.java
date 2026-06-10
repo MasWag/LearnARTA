@@ -6,6 +6,7 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
+import java.util.Arrays;
 import java.util.stream.*;
 
 /**
@@ -14,24 +15,32 @@ import java.util.stream.*;
  * The CLI now uses {@link NrtaToSfaConverter} for parsing, which:
  * <ul>
  *   <li>Supports NRTA targets: primitive location strings, {@code {"or": [...]}} (nondeterminism), and {@code {"const": false}}.</li>
- *   <li><b>Rejects</b> ARTA-style conjunctive target {@code {"and": [...]}} with status {@code "error" + reason}.</li>
+ *   <li><b>Rejects</b> ARTA-style conjunctive target {@code {"and": [...]}} with status {@code "error"}.
+ *       See {@link NrtaToSfaConverter.UnsupportedTargetException}.</li>
  *   <li><b>Rejects</b> {@code {"const": true}} targets as they are meaningless in NRTA.</li>
  * </ul>
  *
- * CSV columns:
- *   file               -- input file path
- *   nrta_locations     -- number of locations (states)
- *   nrta_transitions   -- number of transitions
- *   alphabet_size      -- number of distinct input symbols (from sigma field)
- *   initial_count      -- number of initial states
- *   accepting_count    -- number of accepting states
- *   status             -- "ok" if parsing succeeded, "error:<reason>" otherwise
+ * <h3>Minimum DRTA size</h3>
+ * For supported inputs the CLI builds an SFA, minimizes it, and reports
+ * the count of all states in the minimized SFA as {@code min_drta_states}.
+ * The minimize pipeline in {@code SFA.getMinimalOf} is
+ * {@code removeEpsilon -> determinize -> mkTotal -> partition refinement}.
+ * Since {@code mkTotal} adds a totalization sink state <em>before</em> minimization,
+ * the reported {@code min_drta_states} <b>includes</b> that sink state.
+ * Do not subtract or exclude the sink state without an explicit convention.
+ *
+ * <h3>CSV columns</h3>
+ * {@code file,nrta_locations,nrta_transitions,alphabet_size,initial_count,accepting_count,sfa_states,sfa_transitions,min_drta_states,min_drta_transitions,time_ms,status}
+ *
+ * {@code min_drta_transitions} is -1 when the underlying symbolicautomata API
+ * does not expose a meaningful post-minimization transition count.
+ * Only the state count is currently guaranteed to be meaningful.
  */
 public class DrtSize {
 
     public static void main(String[] args) throws Exception {
         System.out.println(
-            "file,nrta_locations,nrta_transitions,alphabet_size,initial_count,accepting_count,status");
+            "file,nrta_locations,nrta_transitions,alphabet_size,initial_count,accepting_count,sfa_states,sfa_transitions,min_drta_states,min_drta_transitions,time_ms,status");
 
         for (Path file : collectFiles(args)) {
             CsvRow row = processFile(file);
@@ -90,6 +99,12 @@ public class DrtSize {
             // Parse using the NRTA parser for full context and error messages
             NrtaToSfaConverter.ParsedNrta parsed = NrtaToSfaConverter.parseNrtasJson(root, filename);
 
+            // Build SFA and minimize
+            Set<String> sigmaSet = new LinkedHashSet<>(Arrays.asList(parsed.sigma));
+            TimedLetterBooleanAlgebra ba = new TimedLetterBooleanAlgebra(sigmaSet);
+            NrtaToSfaConverter.MinimizationResult result =
+                NrtaToSfaConverter.computeMinimumDrtaSize(parsed, ba);
+
             return new CsvRow(
                 filename,
                 parsed.locationCount(),
@@ -97,6 +112,11 @@ public class DrtSize {
                 parsed.sigma.length,
                 parsed.initialLocations.length,
                 parsed.acceptingLocations.length,
+                result.sfaStates,
+                result.sfaTransitions,
+                result.minDrtaStates,
+                result.minDrtaTransitions,
+                result.timeMs,
                 "ok"
             );
 
@@ -129,18 +149,41 @@ public class DrtSize {
         final int alphabetSize;
         final int initialCount;
         final int acceptingCount;
+        // SFA stats (before minimization)
+        final int sfaStates;
+        final int sfaTransitions;
+        // Minimum DRTA size
+        final int minDrtaStates;
+        final int minDrtaTransitions;
+        final long timeMs;
         final String status;
 
         CsvRow(String file, int nrtaLocations, int nrtaTransitions,
-               int alphabetSize, int initialCount, int acceptingCount,
-               String status) {
+                int alphabetSize, int initialCount, int acceptingCount,
+                int sfaStates, int sfaTransitions,
+                int minDrtaStates, int minDrtaTransitions,
+                long timeMs, String status) {
             this.file = file;
             this.nrtaLocations = nrtaLocations;
             this.nrtaTransitions = nrtaTransitions;
             this.alphabetSize = alphabetSize;
             this.initialCount = initialCount;
             this.acceptingCount = acceptingCount;
+            this.sfaStates = sfaStates;
+            this.sfaTransitions = sfaTransitions;
+            this.minDrtaStates = minDrtaStates;
+            this.minDrtaTransitions = minDrtaTransitions;
+            this.timeMs = timeMs;
             this.status = status;
+        }
+
+        // Legacy constructor for errors
+        CsvRow(String file, int nrtaLocations, int nrtaTransitions,
+                int alphabetSize, int initialCount, int acceptingCount,
+                String status) {
+            this(file, nrtaLocations, nrtaTransitions, alphabetSize,
+                 initialCount, acceptingCount,
+                 0, 0, 0, -1, 0, status);
         }
 
         static String csvEscape(String s) {
@@ -159,6 +202,11 @@ public class DrtSize {
                 String.valueOf(alphabetSize),
                 String.valueOf(ic),
                 String.valueOf(acceptingCount),
+                String.valueOf(sfaStates),
+                String.valueOf(sfaTransitions),
+                String.valueOf(minDrtaStates),
+                String.valueOf(minDrtaTransitions),
+                String.valueOf(timeMs),
                 csvEscape(status)
             );
         }
