@@ -138,11 +138,13 @@ public class NrtaToSfaConverter {
 
         // Parse init locations (required; matches Rust convention where "init" is a required field)
         if (!root.has("init") || !root.get("init").isJsonArray()) {
-            throw new IllegalArgumentException(fileName != null ? fileName + ": missing required field 'init'" + "\n  Hint: add an \"init\" array with at least one location name (e.g., \"init\":[\"q0\"])");
+            String msg = "missing required field 'init'";
+            throw new IllegalArgumentException(makeHelp(fileName, msg, "add an \"init\" array with at least one location name (e.g., \"init\":[\"q0\"])"));
         }
         JsonArray initArr = root.getAsJsonArray("init");
         if (initArr == null || initArr.size() == 0) {
-            throw new IllegalArgumentException(fileName != null ? fileName + ": 'init' array is empty" + "\n  Hint: add at least one initial location name to the \"init\" array (e.g., \"init\":[\"q0\"])");
+            String msg = "'init' array is empty";
+            throw new IllegalArgumentException(makeHelp(fileName, msg, "add at least one initial location name to the \"init\" array (e.g., \"init\":[\"q0\"])"));
         }
         List<Integer> initIds = new ArrayList<>();
         for (int i = 0; i < initArr.size(); i++) {
@@ -422,5 +424,13 @@ public class NrtaToSfaConverter {
             }
         }
         return locs.isEmpty() ? Collections.emptyList() : locs;
+    }
+
+    private static String makeHelp(String fileName, String msg, String hint) {
+        if (fileName != null) {
+            return fileName + ": " + msg + "\n  Hint: " + hint;
+        } else {
+            return msg + "\n  Hint: " + hint;
+        }
     }
 }
