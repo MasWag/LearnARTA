@@ -159,12 +159,10 @@ public class DrtSizeTest {
     }
 
     /**
-     * Simple two-state deterministic example.
+     * Simple deterministic example for language b* a.
      *
-     * q0 --a/[0,+)--> q1, q0 has accepting guard for 'b'=[0,+)
-     * q1 is accepting. The two states are not equivalent, so min = 2.
-     *
-     * Sink is counted (3 states total).
+     * Expected: min_drta_states = 3. The count includes q0, accepting q1,
+     * and the totalization sink reached after missing transitions.
      */
     @Test
     public void testTwoStateDeterministic() throws Exception {
@@ -178,20 +176,20 @@ public class DrtSizeTest {
         NrtaToSfaConverter.MinimizationResult result =
             NrtaToSfaConverter.computeMinimumDrtaSize(nrta, ba);
 
-        assertTrue("two-state deterministic automaton should produce positive min states (sink counted)",
-                   result.minDrtaStates >= 2);
+        assertEquals("b* a requires start, accepting state, and counted sink",
+                     3, result.minDrtaStates);
     }
 
     /**
-     * Nondeterministic "or" example where both q1 and q2 are same target.
+     * Nondeterministic "or" example for the one-letter language {a}.
      *
-     * {"or":["q1","q1"]} is nondeterministic but after determinization + minimization
-     * the result should still be consistent.
+     * Expected: min_drta_states = 3. Determinization reaches the accepting
+     * subset {q1,q2}; the totalization sink is counted.
      */
     @Test
     public void testNondeterministicOrMinimizes() throws Exception {
         String json = "{\"name\":\"nondet-or\",\"l\":[\"q0\",\"q1\",\"q2\"],\"sigma\":[\"a\"]," +
-                      "\"tran\":{\"0\":[\"q0\",\"a\",\"[0,+)\",{\"or\":[\"q1\",\"q1\"]}]}," +
+                      "\"tran\":{\"0\":[\"q0\",\"a\",\"[0,+)\",{\"or\":[\"q1\",\"q2\"]}]}," +
                       "\"init\":[\"q0\"],\"accept\":[\"q1\"]}";
         JsonObject root = JsonParser.parseString(json).getAsJsonObject();
         NrtaToSfaConverter.ParsedNrta nrta = NrtaToSfaConverter.parseNrtasJson(root, "nondet-or");
@@ -199,17 +197,16 @@ public class DrtSizeTest {
         NrtaToSfaConverter.MinimizationResult result =
             NrtaToSfaConverter.computeMinimumDrtaSize(nrta, ba);
 
-        assertTrue("nondeterministic automaton should produce positive min states",
-                   result.minDrtaStates > 0);
+        assertEquals("single-symbol nondeterministic language counts accepting subset and sink",
+                     3, result.minDrtaStates);
     }
 
     /**
      * Partial-transition example: q0 has no transition on symbol 'b'.
      * After totalization, a sink state is added.
      *
-     * Expected: min_drta_states = 2 (q0 + sink).
-     * (q0 and sink are not equivalent because q0 has no self-loop on 'b'
-     * while sink has a self-loop on 'b'; they will be differentiated.)
+     * Expected: min_drta_states = 3. The count includes q0, accepting q1,
+     * and the totalization sink reached from missing transitions.
      */
     @Test
     public void testPartialTransitionsSinkCounted() throws Exception {
@@ -222,8 +219,112 @@ public class DrtSizeTest {
         NrtaToSfaConverter.MinimizationResult result =
             NrtaToSfaConverter.computeMinimumDrtaSize(nrta, ba);
 
-        assertTrue("partial automaton must produce positive min states (sink counted)",
-                   result.minDrtaStates > 0);
+        assertEquals("partial automaton counts q0, q1, and totalization sink",
+                     3, result.minDrtaStates);
+    }
+
+    // ============ strict validation errors ============
+
+    private static DrtSize.CsvRow processJson(String prefix, String json) throws Exception {
+        Path tmp = Files.createTempFile(prefix, ".json");
+        Files.writeString(tmp, json);
+        try {
+            return DrtSize.processFile(tmp);
+        } finally {
+            Files.delete(tmp);
+        }
+    }
+
+    private static void assertErrorContains(DrtSize.CsvRow row, String expected) {
+        assertTrue("expected error status, got: " + row.status,
+            row.status.startsWith("error:"));
+        assertTrue("expected status to contain '" + expected + "', got: " + row.status,
+            row.status.toLowerCase().contains(expected.toLowerCase()));
+        assertEquals(0, row.minDrtaStates);
+        assertEquals(-1, row.minDrtaTransitions);
+    }
+
+    @Test
+    public void testRejectsUnknownSourceLocation() throws Exception {
+        DrtSize.CsvRow row = processJson("bad-source",
+            "{\"l\":[\"q0\",\"q1\"],\"sigma\":[\"a\"]," +
+            "\"tran\":{\"0\":[\"qx\",\"a\",\"[0,+)\",\"q1\"]}," +
+            "\"init\":[\"q0\"],\"accept\":[\"q1\"]}");
+        assertErrorContains(row, "unknown source location");
+        assertEquals(2, row.nrtaLocations);
+        assertEquals(1, row.nrtaTransitions);
+    }
+
+    @Test
+    public void testRejectsUnknownPrimitiveTargetLocation() throws Exception {
+        DrtSize.CsvRow row = processJson("bad-target",
+            "{\"l\":[\"q0\",\"q1\"],\"sigma\":[\"a\"]," +
+            "\"tran\":{\"0\":[\"q0\",\"a\",\"[0,+)\",\"qx\"]}," +
+            "\"init\":[\"q0\"],\"accept\":[\"q1\"]}");
+        assertErrorContains(row, "unknown target location");
+    }
+
+    @Test
+    public void testRejectsUnknownTargetInsideOr() throws Exception {
+        DrtSize.CsvRow row = processJson("bad-or-target",
+            "{\"l\":[\"q0\",\"q1\"],\"sigma\":[\"a\"]," +
+            "\"tran\":{\"0\":[\"q0\",\"a\",\"[0,+)\",{\"or\":[\"q1\",\"qx\"]}]}," +
+            "\"init\":[\"q0\"],\"accept\":[\"q1\"]}");
+        assertErrorContains(row, "inside 'or'");
+    }
+
+    @Test
+    public void testRejectsTransitionSymbolOutsideSigma() throws Exception {
+        DrtSize.CsvRow row = processJson("bad-symbol",
+            "{\"l\":[\"q0\",\"q1\"],\"sigma\":[\"a\"]," +
+            "\"tran\":{\"0\":[\"q0\",\"b\",\"[0,+)\",\"q1\"]}," +
+            "\"init\":[\"q0\"],\"accept\":[\"q1\"]}");
+        assertErrorContains(row, "not declared in sigma");
+    }
+
+    @Test
+    public void testRejectsMalformedTransitionArray() throws Exception {
+        DrtSize.CsvRow row = processJson("bad-array",
+            "{\"l\":[\"q0\",\"q1\"],\"sigma\":[\"a\"]," +
+            "\"tran\":{\"0\":[\"q0\",\"a\",\"[0,+)\"]}," +
+            "\"init\":[\"q0\"],\"accept\":[\"q1\"]}");
+        assertErrorContains(row, "fewer than 4");
+    }
+
+    @Test
+    public void testRejectsNonArrayTransitionEntry() throws Exception {
+        DrtSize.CsvRow row = processJson("bad-entry",
+            "{\"l\":[\"q0\",\"q1\"],\"sigma\":[\"a\"]," +
+            "\"tran\":{\"0\":{\"source\":\"q0\"}}," +
+            "\"init\":[\"q0\"],\"accept\":[\"q1\"]}");
+        assertErrorContains(row, "not an array");
+    }
+
+    @Test
+    public void testRejectsUnknownTargetObject() throws Exception {
+        DrtSize.CsvRow row = processJson("bad-object",
+            "{\"l\":[\"q0\",\"q1\"],\"sigma\":[\"a\"]," +
+            "\"tran\":{\"0\":[\"q0\",\"a\",\"[0,+)\",{\"foo\":[\"q1\"]}]}," +
+            "\"init\":[\"q0\"],\"accept\":[\"q1\"]}");
+        assertErrorContains(row, "unknown target object");
+    }
+
+    @Test
+    public void testRejectsMalformedGuard() throws Exception {
+        DrtSize.CsvRow row = processJson("bad-guard",
+            "{\"l\":[\"q0\",\"q1\"],\"sigma\":[\"a\"]," +
+            "\"tran\":{\"0\":[\"q0\",\"a\",\"not-an-interval\",\"q1\"]}," +
+            "\"init\":[\"q0\"],\"accept\":[\"q1\"]}");
+        assertErrorContains(row, "malformed guard");
+    }
+
+    @Test
+    public void testRejectsEmptyOr() throws Exception {
+        DrtSize.CsvRow row = processJson("bad-empty-or",
+            "{\"l\":[\"q0\",\"q1\"],\"sigma\":[\"a\"]," +
+            "\"tran\":{\"0\":[\"q0\",\"a\",\"[0,+)\",{\"or\":[]}]}," +
+            "\"init\":[\"q0\"],\"accept\":[\"q1\"]}");
+        assertErrorContains(row, "'or' target array is empty");
     }
 
     // ============ CsvRow formatting ============

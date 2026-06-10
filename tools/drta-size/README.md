@@ -50,12 +50,25 @@ Currently set to `-1`. The symbolicautomata API does not expose a meaningful pos
 
 Files containing:
 
-- `{"and": ["q1","q2"]}` -- ARTA-style conjunctive targets are **not supported**. The file produces a CSV row with `status=error:contains ARTA-style conjunctive targets` and the batch continues.
+- `{"and": ["q1","q2"]}` -- ARTA-style conjunctive targets are **not supported**. The file produces a CSV row with `status=error:<reason>` and the batch continues.
 - `{"const": true}` -- Tautologous target has no meaningful interpretation in NRTA and is rejected with `UnsupportedTargetException`.
 
 ## Unsupported ARTA-Style Conjunctive Targets
 
 Files that contain `{"and": ...}` targets in their transitions are ARTA (Alternating Regular Tree Automata) constructs and are **not** converted to SFA. They produce a CSV row with `status=error` and the CLI continues processing subsequent files. This is the expected behavior.
+
+## Strict Input Validation
+
+The parser is strict because `status=ok` rows are intended for paper numbers.
+Malformed transitions and undeclared names are rejected instead of skipped.
+
+- Every transition entry under `tran` must be an array with at least four elements: source location, symbol, guard, and target.
+- Every transition source and every primitive target location must be declared in `l`.
+- Every target listed inside `{"or": [...]}` must be declared in `l`; empty `or` arrays are rejected.
+- Every transition symbol must be declared in `sigma`. The Boolean-algebra alphabet is exactly the declared `sigma`; transitions do not expand it.
+- Guards must parse as timed intervals.
+- Unknown target objects, such as `{"foo": ...}`, produce `status=error:<reason>`.
+- `{"and": ...}` targets remain unsupported and produce `status=error:<reason>`.
 
 ## Prerequisites
 
@@ -80,8 +93,8 @@ Example output:
 ```text
 file,nrta_locations,nrta_transitions,alphabet_size,initial_count,accepting_count,sfa_states,sfa_transitions,min_drta_states,min_drta_transitions,time_ms,status
 atomic-small.json,2,1,1,1,1,2,1,3,-1,14,ok
-middle.json,0,0,0,0,0,0,0,0,-1,0,error:contains ARTA-style conjunctive targets
-small.json,0,0,0,0,0,0,0,0,-1,0,error:contains ARTA-style conjunctive targets
+middle.json,3,6,2,1,1,0,0,0,-1,0,error:middle.json: transition '1': has unsupported ARTA-style conjunctive target ('and')
+small.json,3,4,2,2,1,0,0,0,-1,0,error:small.json: transition '1': has unsupported ARTA-style conjunctive target ('and')
 ```
 
 ## Usage
@@ -132,12 +145,13 @@ Timed interval operations are exact over the internal half-unit representation: 
 Tests for the minimization pipeline are in `src/test/java/drta/DrtSizeTest.java`:
 
 - `testOneStateRejectingNoAcceptingStates` -- one-state rejecting, `min_drta_states = 1` (getEmptySFA short-circuit)
-- `testOneStateAcceptingSelfLoopFullAlphabet` -- one-state accepting, `min_drta_states = 1`
-- `testTwoStateDeterministic` -- two-state deterministic, `min_drta_states >= 2` (sink counted, so >= 2)
-- `testNondeterministicOrMinimizes` -- nondeterministic `or`, minimization succeeds
-- `testPartialTransitionsSinkCounted` -- partial transitions, `min_drta_states > 0` (sink counted)
+- `testOneStateAcceptingSelfLoopFullAlphabet` -- one-state accepting with full self-loops, `min_drta_states = 1`
+- `testTwoStateDeterministic` -- deterministic language `b* a`, `min_drta_states = 3` (sink counted)
+- `testNondeterministicOrMinimizes` -- nondeterministic one-letter language, `min_drta_states = 3` (sink counted)
+- `testPartialTransitionsSinkCounted` -- partial transitions, `min_drta_states = 3` (sink counted)
 - `testCliSmokeTestSupported` -- CLI on supported file produces `status=ok`, `min_drta_states > 0`
 - `testCliSmokeTestUnsupportedProducedError` -- CLI on ARTA-style file produces `status=error`
+- strict validation tests cover unknown locations, undeclared symbols, malformed transitions, malformed guards, unknown target objects, and empty `or`
 
 ## Directory Layout
 
@@ -167,11 +181,11 @@ The data flow is:
 NRTA JSON file  -->  DrtSize.processFile()  -->  CSV row
                            |
                      NrtaToSfaConverter.parseNrtasJson()
-                           |   <-- detects {"and":...} and {const:true} errors
+                           |   <-- strict transition validation
                    ParsedNrta + raw transitions
                            |
                      NrtaToSfaConverter.toSfa()
-                           |   <-- rejects conjunctive targets here too
+                           |   <-- uses exactly the declared sigma alphabet
                    SFA<TimedPredicate, TimedLetter>
                            |
                      NrtaToSfaConverter.computeMinimumDrtaSize(minimize)
@@ -180,7 +194,7 @@ NRTA JSON file  -->  DrtSize.processFile()  -->  CSV row
 ```
 
 The parser (`parseNrtasJson`) separates parsing from conversion so that:
-1. Files with conjunctive targets can produce error CSV rows without crashing the whole batch.
+1. Malformed files can produce error CSV rows without crashing the whole batch.
 2. The converter gets a strongly-typed `ParsedNrta` structure rather than raw JSON manipulation.
 3. Parse/conversion errors include file name and transition context for debugging.
 

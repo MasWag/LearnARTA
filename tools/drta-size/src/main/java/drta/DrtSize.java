@@ -83,18 +83,11 @@ public class DrtSize {
     static CsvRow processFile(Path file) throws IOException {
         String json = new String(Files.readAllBytes(file), StandardCharsets.UTF_8);
         String filename = file.getFileName().toString();
+        CsvRow.Counts counts = CsvRow.Counts.empty();
 
         try {
             JsonObject root = JsonParser.parseString(json).getAsJsonObject();
-
-            // First check for conjunctive targets (ARTA-style) before parsing
-            if (NrtaToSfaConverter.hasConjunctiveTargets(root)) {
-                return new CsvRow(
-                    filename,
-                    0, 0, 0, 0, 0,
-                    "error:contains ARTA-style conjunctive targets ({\"and\": [...]})"
-                );
-            }
+            counts = CsvRow.Counts.fromRoot(root);
 
             // Parse using the NRTA parser for full context and error messages
             NrtaToSfaConverter.ParsedNrta parsed = NrtaToSfaConverter.parseNrtasJson(root, filename);
@@ -121,17 +114,9 @@ public class DrtSize {
             );
 
         } catch (NrtaToSfaConverter.UnsupportedTargetException e) {
-            return new CsvRow(
-                filename,
-                0, 0, 0, 0, 0,
-                "error:" + e.getMessage()
-            );
+            return CsvRow.error(filename, counts, e.getMessage());
         } catch (Exception e) {
-            return new CsvRow(
-                filename,
-                0, 0, 0, 0, 0,
-                "error:" + e.getMessage()
-            );
+            return CsvRow.error(filename, counts, e.getMessage());
         }
     }
 
@@ -157,6 +142,57 @@ public class DrtSize {
         final int minDrtaTransitions;
         final long timeMs;
         final String status;
+
+        static class Counts {
+            final int nrtaLocations;
+            final int nrtaTransitions;
+            final int alphabetSize;
+            final int initialCount;
+            final int acceptingCount;
+
+            Counts(int nrtaLocations, int nrtaTransitions, int alphabetSize,
+                   int initialCount, int acceptingCount) {
+                this.nrtaLocations = nrtaLocations;
+                this.nrtaTransitions = nrtaTransitions;
+                this.alphabetSize = alphabetSize;
+                this.initialCount = initialCount;
+                this.acceptingCount = acceptingCount;
+            }
+
+            static Counts empty() {
+                return new Counts(0, 0, 0, 0, 0);
+            }
+
+            static Counts fromRoot(JsonObject root) {
+                return new Counts(
+                    arraySize(root, "l"),
+                    transitionCount(root),
+                    arraySize(root, "sigma"),
+                    arraySize(root, "init"),
+                    arraySize(root, "accept")
+                );
+            }
+
+            private static int arraySize(JsonObject root, String field) {
+                return root.has(field) && root.get(field).isJsonArray()
+                    ? root.getAsJsonArray(field).size()
+                    : 0;
+            }
+
+            private static int transitionCount(JsonObject root) {
+                if (!root.has("tran")) {
+                    return 0;
+                }
+                JsonElement tran = root.get("tran");
+                if (tran.isJsonObject()) {
+                    return tran.getAsJsonObject().size();
+                }
+                if (tran.isJsonArray()) {
+                    return tran.getAsJsonArray().size();
+                }
+                return 0;
+            }
+        }
 
         CsvRow(String file, int nrtaLocations, int nrtaTransitions,
                 int alphabetSize, int initialCount, int acceptingCount,
@@ -184,6 +220,21 @@ public class DrtSize {
             this(file, nrtaLocations, nrtaTransitions, alphabetSize,
                  initialCount, acceptingCount,
                  0, 0, 0, -1, 0, status);
+        }
+
+        static CsvRow error(String file, Counts counts, String message) {
+            String reason = message == null || message.trim().isEmpty()
+                ? "unknown error"
+                : message.replace('\n', ' ').replace('\r', ' ').trim();
+            return new CsvRow(
+                file,
+                counts.nrtaLocations,
+                counts.nrtaTransitions,
+                counts.alphabetSize,
+                counts.initialCount,
+                counts.acceptingCount,
+                "error:" + reason
+            );
         }
 
         static String csvEscape(String s) {

@@ -24,8 +24,8 @@ import java.util.*;
  *
  * <h3>ARTA-style conjunctive targets</h3>
  * {@code {"and": [...]}} targets are ARTA (Alternating Regular Tree Automata) constructs
- * and are <b>not supported</b> in the NRTA-to-SFA path. Attempting to convert an NRTA
- * with conjunctive targets will raise {@link UnsupportedOperationException}.
+ * and are <b>not supported</b> in the NRTA-to-SFA path. Parsing an NRTA with
+ * conjunctive targets will raise {@link UnsupportedOperationException}.
  */
 public class NrtaToSfaConverter {
 
@@ -272,46 +272,53 @@ public class NrtaToSfaConverter {
             for (String key : keys) {
                 JsonElement transitionElem = tranObj.get(key);
                 rawTransitionsMap.put(key, transitionElem);
+                if (!transitionElem.isJsonArray()) {
+                    throw validationError(fileName, key, "transition entry is not an array");
+                }
                 JsonArray arr = transitionElem.getAsJsonArray();
-                if (arr == null || arr.size() < 4) continue;
+                if (arr.size() < 4) {
+                    throw validationError(fileName, key,
+                        "transition array has fewer than 4 elements");
+                }
 
-                String sourceName = arr.get(0).getAsString();
-                String symbol = arr.get(1).getAsString();
-                String guardStr = arr.get(2).getAsString();
+                String sourceName = requireString(arr.get(0), fileName, key, "source location");
+                String symbol = requireString(arr.get(1), fileName, key, "symbol");
+                String guardStr = requireString(arr.get(2), fileName, key, "guard");
                 JsonElement targetElem = arr.get(3);
 
-                // Check for const:true early — throw immediately with context
-                if (targetElem.isJsonObject()) {
-                    JsonObject obj = targetElem.getAsJsonObject();
-                    if (obj.has("const") && obj.get("const").getAsBoolean()) {
-                        throw new UnsupportedTargetException(
-                            fileName + ": transition '" + key + "' uses {\"const\": true}, which is unsupported in NRTA",
-                            fileName, Integer.parseInt(key));
-                    }
+                if (nameToId(sourceName, locations) < 0) {
+                    throw validationError(fileName, key,
+                        "unknown source location '" + sourceName + "' not in locations");
+                }
+                if (!Arrays.asList(sigma).contains(symbol)) {
+                    throw validationError(fileName, key,
+                        "transition symbol '" + symbol + "' not declared in sigma");
+                }
+
+                TimedInterval guardInterval;
+                try {
+                    guardInterval = TimedInterval.parse(guardStr);
+                } catch (RuntimeException e) {
+                    throw validationError(fileName, key,
+                        "malformed guard '" + guardStr + "': " + e.getMessage());
                 }
 
                 ParsedTransition trans = new ParsedTransition(sourceName, symbol, guardStr);
-                
-                boolean isDeadEnd;
-                if (targetElem.isJsonObject()) {
-                    JsonObject obj = targetElem.getAsJsonObject();
-                    if (obj.has("const") && !obj.get("const").getAsBoolean()) {
-                        isDeadEnd = true; // const:false
-                    } else if (obj.has("and")) {
-                        isDeadEnd = false; // conjunctive — caller will reject during conversion
-                    } else {
-                        isDeadEnd = false;
-                    }
-                } else {
-                    // primitive string target
-                    String loc = targetElem.getAsString();
-                    Integer id = nameToId(loc, locations);
-                    isDeadEnd = (id == -1);
-                }
+                trans.guardInterval = guardInterval;
 
-                trans.isDeadEnd = isDeadEnd;
+                ParsedNrta.TargetInfo targets = extractTargets(targetElem, locations, n, key, fileName);
+                trans.isDeadEnd = "const_false".equals(targets.kind);
                 allTransitionList.add(trans);
             }
+        } else if (root.has("tran") && root.get("tran").isJsonArray()
+                && root.getAsJsonArray("tran").size() > 0) {
+            throw new IllegalArgumentException(
+                (fileName != null ? fileName + ": " : "")
+                + "field 'tran' must be an object keyed by transition id, or an empty array");
+        } else if (root.has("tran") && !root.get("tran").isJsonArray()) {
+            throw new IllegalArgumentException(
+                (fileName != null ? fileName + ": " : "")
+                + "field 'tran' must be an object keyed by transition id");
         }
 
         parsed.setTransitions(allTransitionList);
@@ -379,7 +386,6 @@ public class NrtaToSfaConverter {
         for (Map.Entry<String, JsonElement> entry : nrta.rawTransitions.entrySet()) {
             String key = entry.getKey();
             JsonArray arr = entry.getValue().getAsJsonArray();
-            if (arr == null || arr.size() < 4) { transIndex++; continue; }
 
             String sourceName = arr.get(0).getAsString();
             String sym = arr.get(1).getAsString();
@@ -387,9 +393,6 @@ public class NrtaToSfaConverter {
             JsonElement targetElem = arr.get(3);
 
             int sourceId = nameToId(sourceName, nrta.locations);
-            if (sourceId == -1) { transIndex++; continue; }
-
-            sigmaSet.add(sym);
 
             ParsedNrta.TargetInfo targets = extractTargets(targetElem, nrta.locations, n, key, nrta.name);
             
@@ -430,49 +433,70 @@ public class NrtaToSfaConverter {
     /** Extract target state IDs and kind from a JSON element. */
     private static ParsedNrta.TargetInfo extractTargets(JsonElement element, List<String> locs, int n,
                                                          String transitionKey, String fileName) {
-        if (element == null || element.isJsonNull()) return ParsedNrta.TargetInfo.empty();
+        if (element == null || element.isJsonNull()) {
+            throw validationError(fileName, transitionKey, "missing target");
+        }
         if (element.isJsonPrimitive()) {
             String loc = element.getAsString();
             Integer id = nameToId(loc, locs);
-            if (id == -1) return ParsedNrta.TargetInfo.empty();
+            if (id == -1) {
+                throw validationError(fileName, transitionKey,
+                    "unknown target location '" + loc + "' not in locations");
+            }
             return new ParsedNrta.TargetInfo(Collections.singletonList(id), "primitive");
         }
         if (!element.isJsonObject()) {
-            return ParsedNrta.TargetInfo.empty();
+            throw validationError(fileName, transitionKey, "target is neither a location nor an object");
         }
 
         JsonObject obj = element.getAsJsonObject();
         if (obj.has("and")) {
-            List<Integer> ids = new ArrayList<>();
-            for (JsonElement e : obj.get("and").getAsJsonArray()) {
-                if (e.isJsonPrimitive()) {
-                    Integer id = nameToId(e.getAsString(), locs);
-                    if (id != -1) ids.add(id);
-                }
-            }
-            return ParsedNrta.TargetInfo.conjunctive(ids);
+            throw new UnsupportedTargetException(
+                formatTransitionMessage(fileName, transitionKey,
+                    "has unsupported ARTA-style conjunctive target ('and')"),
+                fileName, transitionIndexFromKey(transitionKey));
         }
         if (obj.has("or")) {
+            if (!obj.get("or").isJsonArray()) {
+                throw validationError(fileName, transitionKey, "'or' target is not an array");
+            }
+            JsonArray arr = obj.getAsJsonArray("or");
+            if (arr.size() == 0) {
+                throw validationError(fileName, transitionKey, "'or' target array is empty");
+            }
             List<Integer> ids = new ArrayList<>();
-            for (JsonElement e : obj.get("or").getAsJsonArray()) {
-                if (e.isJsonPrimitive()) {
-                    Integer id = nameToId(e.getAsString(), locs);
-                    if (id != -1) ids.add(id);
+            for (JsonElement e : arr) {
+                if (!e.isJsonPrimitive() || !e.getAsJsonPrimitive().isString()) {
+                    throw validationError(fileName, transitionKey,
+                        "'or' target contains a non-string location");
                 }
+                String loc = e.getAsString();
+                Integer id = nameToId(loc, locs);
+                if (id == -1) {
+                    throw validationError(fileName, transitionKey,
+                        "unknown target location '" + loc + "' inside 'or' not in locations");
+                }
+                ids.add(id);
             }
             return new ParsedNrta.TargetInfo(ids, "or");
         }
         if (obj.has("const")) {
+            if (!obj.get("const").isJsonPrimitive()
+                    || !obj.getAsJsonPrimitive("const").isBoolean()) {
+                throw validationError(fileName, transitionKey, "'const' target is not boolean");
+            }
             boolean val = obj.get("const").getAsBoolean();
             if (val) {
                 throw new UnsupportedTargetException(
-                    fileName + ": transition '" + transitionKey + "' uses {\"const\": true}, which is unsupported in NRTA",
-                    fileName, Integer.parseInt(transitionKey));
+                    formatTransitionMessage(fileName, transitionKey,
+                        "uses {\"const\": true}, which is unsupported in NRTA"),
+                    fileName, transitionIndexFromKey(transitionKey));
             } else {
                 return new ParsedNrta.TargetInfo(Collections.emptyList(), "const_false");
             }
         }
-        return ParsedNrta.TargetInfo.empty();
+        throw validationError(fileName, transitionKey,
+            "unknown target object " + obj.toString());
     }
 
     private static List<String> readLocations(JsonObject root) {
@@ -492,6 +516,37 @@ public class NrtaToSfaConverter {
             return fileName + ": " + msg + "\n  Hint: " + hint;
         } else {
             return msg + "\n  Hint: " + hint;
+        }
+    }
+
+    private static String requireString(JsonElement element, String fileName,
+                                        String transitionKey, String fieldName) {
+        if (element == null || !element.isJsonPrimitive()
+                || !element.getAsJsonPrimitive().isString()) {
+            throw validationError(fileName, transitionKey, fieldName + " is not a string");
+        }
+        return element.getAsString();
+    }
+
+    private static IllegalArgumentException validationError(String fileName,
+                                                           String transitionKey,
+                                                           String message) {
+        return new IllegalArgumentException(
+            formatTransitionMessage(fileName, transitionKey, message));
+    }
+
+    private static String formatTransitionMessage(String fileName,
+                                                  String transitionKey,
+                                                  String message) {
+        String prefix = fileName != null ? fileName + ": " : "";
+        return prefix + "transition '" + transitionKey + "': " + message;
+    }
+
+    private static int transitionIndexFromKey(String key) {
+        try {
+            return Integer.parseInt(key);
+        } catch (NumberFormatException e) {
+            return -1;
         }
     }
 }
