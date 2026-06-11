@@ -27,6 +27,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import re
 import sys
@@ -44,6 +45,9 @@ ID_PATTERN = re.compile(
     r"(?P<algorithm>learn-arta|nlstar-rta)-(?P<date>\d{8})-(?P<time>\d{6})$"
 )
 ELAPSED_TIME_PATTERN = re.compile(r"^\d+(?::\d{2}){1,2}(?:\.\d{2})?$")
+DRTA_SIZE_COLUMN = "DRTA-size"
+
+
 @dataclass(frozen=True)
 class SummaryEntry:
     """Normalized subset of an experiment summary entry."""
@@ -59,6 +63,15 @@ class SummaryEntry:
 
     def value_for_metric(self, metric: str) -> str:
         return str(getattr(self, metric))
+
+
+@dataclass(frozen=True)
+class DrtaSizeEntry:
+    """DRTA-size metadata loaded from a generated CSV map."""
+
+    benchmark_name: str
+    drta_size: str
+    status: str
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -78,6 +91,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="text",
         help="Output format (default: text)",
     )
+    parser.add_argument(
+        "--drta-size-csv",
+        help=(
+            "Optional CSV produced by generate_drta_size_map.py; when provided, "
+            "add a DRTA-size column keyed by benchmark_name"
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -93,6 +113,48 @@ def load_summary(path: Path) -> list[SummaryEntry]:
         raise ValueError("summary JSON must be a top-level array")
 
     return [normalize_entry(entry, index) for index, entry in enumerate(payload)]
+
+
+def load_drta_size_csv(path: Path) -> dict[str, DrtaSizeEntry]:
+    try:
+        with path.open(newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            required_columns = {"benchmark_name", "drta_size", "status"}
+            if reader.fieldnames is None:
+                raise ValueError(f"DRTA-size CSV {path} is empty")
+            missing_columns = required_columns.difference(reader.fieldnames)
+            if missing_columns:
+                missing = ", ".join(sorted(missing_columns))
+                raise ValueError(f"DRTA-size CSV {path} is missing columns: {missing}")
+
+            entries: dict[str, DrtaSizeEntry] = {}
+            for row_number, row in enumerate(reader, start=2):
+                benchmark_name = (row.get("benchmark_name") or "").strip()
+                drta_size = (row.get("drta_size") or "").strip()
+                status = (row.get("status") or "").strip()
+
+                if not benchmark_name:
+                    raise ValueError(
+                        f"DRTA-size CSV {path} row {row_number} has empty benchmark_name"
+                    )
+                if benchmark_name in entries:
+                    raise ValueError(
+                        f"DRTA-size CSV {path} has duplicate benchmark {benchmark_name!r}"
+                    )
+                if status == "ok" and not drta_size.isdecimal():
+                    raise ValueError(
+                        f"DRTA-size CSV {path} row {row_number} has invalid drta_size"
+                    )
+
+                entries[benchmark_name] = DrtaSizeEntry(
+                    benchmark_name=benchmark_name,
+                    drta_size=drta_size,
+                    status=status,
+                )
+    except FileNotFoundError as exc:
+        raise ValueError(f"DRTA-size CSV not found: {path}") from exc
+
+    return entries
 
 
 def normalize_entry(entry: Any, index: int) -> SummaryEntry:
@@ -173,6 +235,7 @@ def select_latest_entries(entries: list[SummaryEntry]) -> dict[tuple[str, str], 
 
 def build_rows(
     latest_entries: dict[tuple[str, str], SummaryEntry],
+    drta_sizes: dict[str, DrtaSizeEntry] | None = None,
 ) -> tuple[list[dict[str, str]], list[str]]:
     benchmark_names = sorted(
         {benchmark_name for benchmark_name, _ in latest_entries},
@@ -183,6 +246,21 @@ def build_rows(
 
     for benchmark_name in benchmark_names:
         row: dict[str, str] = {"benchmark_name": format_benchmark_label(benchmark_name)}
+        if drta_sizes is not None:
+            drta_entry = drta_sizes.get(benchmark_name)
+            if drta_entry is None:
+                warnings.append(
+                    f"warning: benchmark {benchmark_name!r} is missing DRTA-size data"
+                )
+                row[DRTA_SIZE_COLUMN] = PLACEHOLDER
+            elif drta_entry.status != "ok":
+                warnings.append(
+                    f"warning: benchmark {benchmark_name!r} has DRTA-size status "
+                    f"{drta_entry.status!r}"
+                )
+                row[DRTA_SIZE_COLUMN] = PLACEHOLDER
+            else:
+                row[DRTA_SIZE_COLUMN] = drta_entry.drta_size
         for algorithm in ALGORITHMS:
             entry = latest_entries.get((benchmark_name, algorithm))
             if entry is None:
@@ -263,8 +341,14 @@ def superior_cells(row: dict[str, str]) -> set[str]:
     return winners
 
 
-def column_names() -> list[str]:
+def has_drta_size_column(rows: list[dict[str, str]]) -> bool:
+    return any(DRTA_SIZE_COLUMN in row for row in rows)
+
+
+def column_names(include_drta_size: bool = False) -> list[str]:
     columns = ["benchmark_name"]
+    if include_drta_size:
+        columns.append(DRTA_SIZE_COLUMN)
     for algorithm in ALGORITHMS:
         for metric in METRICS:
             columns.append(f"{algorithm}.{metric}")
@@ -272,7 +356,7 @@ def column_names() -> list[str]:
 
 
 def render_text_table(rows: list[dict[str, str]]) -> str:
-    columns = column_names()
+    columns = column_names(has_drta_size_column(rows))
     widths = {
         column: max(len(column), *(len(row[column]) for row in rows))
         if rows
@@ -297,18 +381,31 @@ def render_text_table(rows: list[dict[str, str]]) -> str:
 
 
 def render_latex_table(rows: list[dict[str, str]]) -> str:
-    lines = [
-        r"\begin{tabular}{lrrrrrrrr}",
-        r"\toprule",
-        r"benchmark\_name & \multicolumn{4}{c}{learn-arta} & \multicolumn{4}{c}{nlstar-rta} \\",
-        r"\cmidrule(lr){2-5}\cmidrule(lr){6-9}",
-        r" & eq\_queries & mem\_queries & num\_states & elapsed\_time & eq\_queries & mem\_queries & num\_states & elapsed\_time \\",
-        r"\midrule",
-    ]
+    include_drta_size = has_drta_size_column(rows)
+    if include_drta_size:
+        lines = [
+            r"\begin{tabular}{lrrrrrrrrr}",
+            r"\toprule",
+            r"benchmark\_name & DRTA-size & \multicolumn{4}{c}{learn-arta} & \multicolumn{4}{c}{nlstar-rta} \\",
+            r"\cmidrule(lr){3-6}\cmidrule(lr){7-10}",
+            r" & & eq\_queries & mem\_queries & num\_states & elapsed\_time & eq\_queries & mem\_queries & num\_states & elapsed\_time \\",
+            r"\midrule",
+        ]
+    else:
+        lines = [
+            r"\begin{tabular}{lrrrrrrrr}",
+            r"\toprule",
+            r"benchmark\_name & \multicolumn{4}{c}{learn-arta} & \multicolumn{4}{c}{nlstar-rta} \\",
+            r"\cmidrule(lr){2-5}\cmidrule(lr){6-9}",
+            r" & eq\_queries & mem\_queries & num\_states & elapsed\_time & eq\_queries & mem\_queries & num\_states & elapsed\_time \\",
+            r"\midrule",
+        ]
 
     for row in rows:
         winners = superior_cells(row)
         cells = [latex_escape(row["benchmark_name"])]
+        if include_drta_size:
+            cells.append(latex_escape(row[DRTA_SIZE_COLUMN]))
         for algorithm in ALGORITHMS:
             for metric in METRICS:
                 key = f"{algorithm}.{metric}"
@@ -343,8 +440,13 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         entries = load_summary(Path(args.summary_json))
+        drta_sizes = (
+            load_drta_size_csv(Path(args.drta_size_csv))
+            if args.drta_size_csv is not None
+            else None
+        )
         latest_entries = select_latest_entries(entries)
-        rows, warnings = build_rows(latest_entries)
+        rows, warnings = build_rows(latest_entries, drta_sizes)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
