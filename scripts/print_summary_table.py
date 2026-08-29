@@ -58,6 +58,8 @@ class SummaryEntry:
     timestamp: str
     eq_queries: int
     mem_queries: int
+    rows: int
+    columns: int
     num_states: int
     elapsed_time: str
 
@@ -165,6 +167,8 @@ def normalize_entry(entry: Any, index: int) -> SummaryEntry:
     benchmark_name = require_non_empty_string(entry, "benchmark_name", index)
     eq_queries = require_non_negative_int(entry, "eq_queries", index)
     mem_queries = require_non_negative_int(entry, "mem_queries", index)
+    rows = require_non_negative_int(entry, "rows", index)
+    columns = require_non_negative_int(entry, "columns", index)
     num_states = require_non_negative_int(entry, "num_states", index)
     elapsed_time = require_elapsed_time(entry, "elapsed_time", index)
 
@@ -181,6 +185,8 @@ def normalize_entry(entry: Any, index: int) -> SummaryEntry:
         timestamp=timestamp,
         eq_queries=eq_queries,
         mem_queries=mem_queries,
+        rows=rows,
+        columns=columns,
         num_states=num_states,
         elapsed_time=elapsed_time,
     )
